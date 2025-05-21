@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 from ..predict import k_nearest_neighbours_classifier
-from ..opts import DEFAULT_RANDOM_SEED
+from .opts import DEFAULT_RANDOM_SEED
 from .covars import get_principal_components, create_celltype_clusters
 
 log = logging.getLogger('snco')
