@@ -5,9 +5,10 @@ import pandas as pd
 from scipy.signal import find_peaks
 from scipy.ndimage import convolve
 
-from .utils import read_gtf_gene_locs, read_eqtl_results
+from .io.gtf import read_gtf_gene_locs
+from .io.misc import read_eqtl_results
 
-log = logging.getLogger('snco')
+log = logging.getLogger('sneqtl')
 
 
 def lod_peak_finder(lod_scores, pvals, lod_threshold, pval_threshold,

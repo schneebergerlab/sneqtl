@@ -1,6 +1,7 @@
+import re
 import click
 
-from snco.main.opts.file_opts import _input_dir_type, _input_file_type, _output_file_type
+from snco.main.opts.file_opts import _input_dir_type, _input_file_type, _output_dir_type, _output_file_type
 from snco.main.opts.util_opts import _get_rng
 from snco.main.registry import OptionRegistry
 from snco.main.logger import click_logger
@@ -8,13 +9,13 @@ from snco.main.opts.callbacks import log_parameters
 from snco.defaults import DEFAULT_RANDOM_SEED
 
 
-sneqtl_opts = OptionRegistry(subcommands=['eqtl', 'peakcall'])
-sneqtl_opts.register_callback(log_parameters)
+sneqtl_opts = OptionRegistry(subcommands=['loadexprs', 'concatexprs', 'doubletexprs', 'eqtl', 'peakcall'])
+sneqtl_opts.register_callback(log_parameters('sneqtl'))
 
 
 sneqtl_opts.argument(
     'exprs-mat-dir',
-    subcommands=['eqtl'],
+    subcommands=['doubletexprs', 'eqtl'],
     required=True,
     nargs=1,
     type=_input_dir_type,
@@ -22,8 +23,17 @@ sneqtl_opts.argument(
 
 
 sneqtl_opts.argument(
-    'pred-json-fn',
-    subcommands=['eqtl'],
+    'exprs-mat-dir',
+    subcommands=['concatexprs'],
+    required=True,
+    nargs=-1,
+    type=_input_dir_type
+)
+
+
+sneqtl_opts.argument(
+    'haplo-json-fn',
+    subcommands=['doubletexprs', 'eqtl'],
     required=True,
     nargs=1,
     type=_input_file_type,
@@ -40,11 +50,12 @@ sneqtl_opts.argument(
 
 
 sneqtl_opts.option(
-    '-c', '--cb-stats-fn',
-    subcommands=['eqtl'],
-    required=False,
-    type=_input_file_type,
-    help='cell barcode stats (output of snco predict/stats)'
+    '-o', '--output-mat-dir',
+    subcommands=['loadexprs', 'concatexprs'],
+    required=True,
+    nargs=1,
+    type=_output_dir_type,
+    help='Output directory for matrix market format expression data'
 )
 
 
@@ -59,10 +70,28 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '-o', '--output-tsv-fn',
-    subcommands=['peakcall'],
+    subcommands=['doubletexprs', 'peakcall'],
     required=True,
     type=_output_file_type,
     help='Output prefix'
+)
+
+
+sneqtl_opts.option(
+    '-b', '--bam-fn',
+    subcommands=['loadexprs'],
+    required=True,
+    type=_input_file_type,
+    help='BAM file name'
+)
+
+
+sneqtl_opts.option(
+    '-c', '--cb-stats-fn',
+    subcommands=['doubletexprs', 'eqtl'],
+    required=False,
+    type=_input_file_type,
+    help='cell barcode stats (output of snco predict/stats)'
 )
 
 
@@ -77,7 +106,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '-g', '--gtf-fn',
-    subcommands=['peakcall'],
+    subcommands=['loadexprs', 'peakcall'],
     required=True,
     type=_input_file_type,
     help='GTF file name'
@@ -85,8 +114,107 @@ sneqtl_opts.option(
 
 
 sneqtl_opts.option(
+    '-c', '--cb-whitelist-fn',
+    subcommands=['loadexprs'],
+    required=False,
+    type=_input_file_type,
+    help='cell barcode whitelist'
+)
+
+
+def _validate_bam_tag(ctx, param, value):
+    if not len(value) == 2:
+        raise ValueError(f'{param} is not of length 2')
+    return value
+
+
+sneqtl_opts.option(
+    '--cb-tag',
+    subcommands=['loadexprs'],
+    required=False,
+    type=str,
+    default='CB',
+    callback=_validate_bam_tag,
+    help='bam file tag representing cell barcode'
+)
+
+
+sneqtl_opts.option(
+    '--umi-collapse-method',
+    subcommands=['loadexprs'],
+    is_eager=True,
+    required=False,
+    type=click.Choice(['exact', 'directional', 'none'], case_sensitive=False),
+    default='exact',
+    help='Method for deduplicating/collapsing UMIs'
+)
+
+
+sneqtl_opts.option(
+    '--umi-tag',
+    subcommands=['loadexprs'],
+    required=False,
+    type=str,
+    default='UB',
+    help='bam file tag representing UMI'
+)
+
+
+sneqtl_opts.option(
+    '--min-mapq',
+    subcommands=['loadexprs'],
+    required=False,
+    type=click.IntRange(0, 255),
+    default=0,
+    help='only reads with a mapq greater than this value are used'
+)
+
+
+
+sneqtl_opts.option(
+    '--strand-type',
+    subcommands=['loadexprs'],
+    required=False,
+    type=click.Choice(['fwd', 'rev'], case_sensitive=False),
+    default='fwd',
+    help='Which strand to take reads from in relation to transcripts'
+)
+
+
+sneqtl_opts.option(
+    '--quant-type',
+    subcommands=['loadexprs'],
+    required=False,
+    type=click.Choice(['gene', 'gene_full'], case_sensitive=False),
+    default='gene',
+    help='how to quantify gene expression - "gene" == exons, "gene_full" == exons+introns'
+)
+
+
+def _parse_merge_suffixes(ctx, param, value):
+    if value is not None:
+        value = value.strip(',')
+        if not re.match('^[a-zA-Z0-9,]+$', value):
+            log.error('merge suffixes must be alphanumeric only')
+        value = value.split(',')
+    return value
+
+
+sneqtl_opts.option(
+    '-M', '--merge-suffixes',
+    subcommands=['concatexprs'],
+    required=False,
+    type=str,
+    default=None,
+    callback=_parse_merge_suffixes,
+    help=('comma separated list of suffixes to append to cell barcodes from '
+          'each file. Must be alphanumeric with same length as no. mtx dirs')
+)
+
+
+sneqtl_opts.option(
     '--min-cells-exprs',
-    subcommands=['eqtl'],
+    subcommands=['doubletexprs', 'eqtl'],
     required=False,
     type=click.FloatRange(0.0, 0.5),
     default=0.02,
@@ -105,7 +233,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '--min-pc-var-explained',
-    subcommands=['eqtl'],
+    subcommands=['doubletexprs', 'eqtl'],
     required=False,
     type=click.FloatRange(0, 1.0),
     default=0.01,
@@ -115,7 +243,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '--max-pc-haplotype-var-explained',
-    subcommands=['eqtl'],
+    subcommands=['doubletexprs', 'eqtl'],
     required=False,
     type=click.FloatRange(0.01, 1.0),
     default=0.05,
@@ -161,7 +289,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '--celltype-n-clusters',
-    subcommands=['eqtl'],
+    subcommands=['doubletexprs', 'eqtl'],
     required=False,
     type=click.IntRange(2, 10),
     default=None,
@@ -203,7 +331,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '--cb-filter-exprs',
-    subcommands=['eqtl'],
+    subcommands=['doubletexprs', 'eqtl'],
     required=False,
     type=str,
     default=None,
@@ -294,7 +422,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '-p', '--processes',
-    subcommands=['eqtl',],
+    subcommands=['loadexprs', 'eqtl',],
     required=False,
     type=click.IntRange(min=1),
     default=1,
@@ -315,7 +443,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '-v', '--verbosity',
-    subcommands=['eqtl', 'peakcall'],
+    subcommands=['loadexprs', 'concatexprs', 'doubletexprs', 'eqtl', 'peakcall'],
     required=False,
     expose_value=False,
     metavar='LVL',
@@ -324,6 +452,6 @@ sneqtl_opts.option(
         case_sensitive=False
     ),
     default='info',
-    callback=click_logger,
+    callback=click_logger('sneqtl'),
     help='Logging level, either debug, info, warning, error or critical'
 )

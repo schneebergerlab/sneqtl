@@ -1,7 +1,9 @@
 import os
+from logging import getLogger
 import re
 from copy import copy
 from collections import defaultdict, Counter
+from functools import reduce
 import itertools as it
 from scipy import sparse
 from scipy.io import mmwrite
@@ -13,8 +15,11 @@ import click
 
 from snco.load.barcodes import read_cb_whitelist, umi_dedup_directional
 
-from sneqtl.utils import parse_gtf
-from snco.barcodes import umi_dedup_directional
+from sneqtl.io.mtx import write_matrix_market
+from sneqtl.io.gtf import parse_gtf
+
+
+log = getLogger('sneqtl')
 
 
 def strand_filter(filt_type, gene_strand):
@@ -31,15 +36,14 @@ def strand_filter(filt_type, gene_strand):
     return _strand_filter
 
 
-def generate_scrna_count_matrix(genes, cb_whitelist, bam_fn, min_mapq=255,
-                                strand_filt_type='fwd', cb_tag='CB', umi_tag='UB',
-                                umi_dedup_method='exact'):
-    gene_counts = sparse.dok_matrix((len(genes), len(cb_whitelist)), dtype=np.int16)
-    cb_idx = {cb: i for i, cb in enumerate(cb_whitelist)}
+def generate_scrna_count_dict(genes, bam_fn, cb_whitelist=None, min_mapq=255,
+                              strand_filt_type='fwd', cb_tag='CB', umi_tag='UB',
+                              umi_dedup_method='exact'):
+    gene_counts = {}
     with pysam.AlignmentFile(bam_fn) as bam:
-        for gene_idx, (gene_id, chrom, gene_strand, exons) in enumerate(genes):
+        for gene_id, chrom, gene_strand, exons in genes:
             sf = strand_filter(strand_filt_type, gene_strand)
-            # umi dedup method 
+            # umi dedup method
             umi_counts = defaultdict(Counter)
             gene_read_ids = set()
             for start, end in exons:
@@ -50,76 +54,66 @@ def generate_scrna_count_matrix(genes, cb_whitelist, bam_fn, min_mapq=255,
                         continue
                     if aln.mapq >= min_mapq and sf(aln):
                         cb = aln.get_tag(cb_tag)
-                        umi = aln.get_tag(umi_tag)
-                        try:
-                            c_i = cb_idx[cb]
-                        except KeyError:
-                            continue
-                        umi_counts[c_i][umi] += 1
-                        gene_read_ids.add(read_id)
+                        if cb_whitelist is None or cb in cb_whitelist:
+                            umi = aln.get_tag(umi_tag)
+                            umi_counts[cb][umi] += 1
+                            gene_read_ids.add(read_id)
 
-            for c_i, cb_umi_counts in umi_counts.items():
+            gene_counts[gene_id] = {}
+            for cb, cb_umi_counts in umi_counts.items():
                 if umi_dedup_method == 'directional':
                     cb_umi_counts = umi_dedup_directional(cb_umi_counts, has_haplotype=False)
                 if umi_dedup_method == 'none':
                     count = cb_umi_counts.total()
                 else:
                     count = len(cb_umi_counts)
-                gene_counts[gene_idx, c_i] = count
+                gene_counts[gene_id][cb] = count
 
-    return gene_counts.tocsc()
+    return gene_counts
 
 
-def chunk_data(data, chunk_size=100):
+def chunk_data(data, chunk_size=1000):
     d_it = iter(data)
     for i in range(0, len(data), chunk_size):
         yield list(it.islice(d_it, chunk_size))
 
 
-def parallel_scrna_gene_counter(gtf_fn, cb_whitelist_fn, bam_fn, quant_type='gene', njobs=1, **kwargs):
+def parallel_scrna_gene_counter(bam_fn, gtf_fn, cb_whitelist_fn, quant_type='gene', njobs=1, **kwargs):
     cb_whitelist = read_cb_whitelist(cb_whitelist_fn).tolist()
+    if cb_whitelist is not None:
+        log.info(f'Read {len(cb_whitelist)} barcodes from "{cb_whitelist_fn}"')
     genes = parse_gtf(gtf_fn, model_type=quant_type)
-    with Parallel(njobs, verbose=100) as pool:
-        matrices = pool(
-            delayed(generate_scrna_count_matrix)(
-                gene_chunk, cb_whitelist, bam_fn, **kwargs
-            ) for gene_chunk in list(chunk_data(genes))
+    log.info(f'Read {len(genes)} genes from "{gtf_fn}"')
+    log.info(f'Processing genes with {njobs} processes')
+    with Parallel(njobs) as pool:
+        results = pool(
+            delayed(generate_scrna_count_dict)(
+                gene_chunk, bam_fn, cb_whitelist, **kwargs
+            ) for gene_chunk in chunk_data(genes)
         )
-    gene_ids = [g[0] for g in genes]
-    return gene_ids, cb_whitelist, sparse.vstack(matrices)
+    gene_counts = defaultdict(Counter)
+    barcodes = set()
+    for chunk_gene_counts in results:
+        for gid, cb_dict in chunk_gene_counts.items():
+            gene_counts[gid].update(cb_dict)
+            barcodes.update(cb_dict)
 
+    if cb_whitelist is not None:
+        barcodes.intersection_update(cb_whitelist)
+    barcodes = sorted(barcodes)
+    log.info(f'Identified {len(barcodes)} barcodes with at least one UMI')
+    barcode_index = {b: i for i, b in enumerate(barcodes)}
 
-def write_features(feats_list, output_fn):
-    with open(output_fn, 'w') as f:
-        for feat in feats_list:
-            f.write(f'{feat}\n')
+    features = sorted([g[0] for g in genes])
+    feature_index = {f: i for i, f in enumerate(features)}
 
-
-def write_matrix_market(output_dir, gene_ids, cb_whitelist, mtx):
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
-    cb_fn = os.path.join(output_dir, 'barcodes.tsv')
-    feat_fn = os.path.join(output_dir, 'features.tsv')
-    mtx_fn = os.path.join(output_dir, 'matrix.mtx')
-    write_features(cb_whitelist, cb_fn)
-    write_features(gene_ids, feat_fn)
-    mmwrite(mtx_fn, mtx)
-
-
-def run_loadexprs(output_dir, gtf_fn, cb_whitelist_fn, bam_fn,
-                  min_mapq=255, cb_tag='CB', umi_tag='UB', umi_dedup_method='exact',
-                  strand_filt_type='fwd', quant_type='gene', processes=1):
-    gene_ids, cb_whitelist, mtx = parallel_scrna_gene_counter(
-        gtf_fn, cb_whitelist_fn, bam_fn,
-        min_mapq=min_mapq,
-        cb_tag=cb_tag,
-        umi_tag=umi_tag,
-        umi_dedup_method=umi_dedup_method,
-        strand_filt_type=strand_filt_type,
-        quant_type=quant_type,
-        njobs=processes
-    )
-
-    write_matrix_market(
-        output_dir, gene_ids, cb_whitelist, mtx
-    )
+    matrix = sparse.dok_matrix((len(features), len(barcodes)), dtype=np.int32)
+    for gene_id, cb_counts in gene_counts.items():
+        fi = feature_index[gene_id]
+        for cb, count in cb_counts.items():
+            try:
+                bi = barcode_index[cb]
+            except KeyError:
+                continue
+            matrix[fi, bi] = count
+    return features, barcodes, matrix

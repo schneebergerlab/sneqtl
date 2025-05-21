@@ -2,11 +2,12 @@ import logging
 import numpy as np
 import pandas as pd
 
-from ..predict import k_nearest_neighbours_classifier
-from .opts import DEFAULT_RANDOM_SEED
-from .covars import get_principal_components, create_celltype_clusters
+from ..covars import get_principal_components, create_celltype_clusters
+from snco.predict.doublet import k_nearest_neighbours_classifier
+from snco.defaults import DEFAULT_RANDOM_SEED
 
-log = logging.getLogger('snco')
+
+log = logging.getLogger('sneqtl')
 DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
 
 
@@ -23,7 +24,7 @@ def simulate_expression_doublets(exprs_mat, celltype_clusters, n_sim,
         syn_idx = rng.choice(cluster_i_idx, size=n_sim, replace=True)
         syn_doublets.append(exprs_mat.iloc[:, syn_idx])
     syn_doublets = np.array(syn_doublets)
-    barcode_weights = np.random.poisson(multiplet_factor, size=(n_clusters, n_sim)) + 1
+    barcode_weights = rng.poisson(multiplet_factor, size=(n_clusters, n_sim)) + 1
     barcode_weights = np.tile(barcode_weights, n_genes).reshape(n_clusters, n_genes, n_sim)
     syn_doublets = np.average(syn_doublets, axis=0, weights=barcode_weights)
     return pd.DataFrame(
@@ -44,8 +45,8 @@ def predict_expression_doublets(exprs_mat, haplotypes, n_doublets, k_neighbours,
         min_var_explained=min_var_explained,
         max_pcs=max_pcs,
         max_pc_haplotype_var_explained=max_pc_haplotype_var_explained,
+        return_pca_transformer=True,
         rng=rng,
-        return_pca_transformer=True
     )
     celltype_clusters_init = create_celltype_clusters(
         principal_components,
