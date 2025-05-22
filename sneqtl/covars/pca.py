@@ -7,7 +7,7 @@ from sklearn.decomposition import PCA
 from snco.defaults import DEFAULT_RANDOM_SEED
 
 log = logging.getLogger('sneqtl')
-
+DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
 
 def filter_haplotype_correlated_principal_components(principal_components, haplotypes,
                                                      max_var_explained=0.05):
@@ -25,20 +25,27 @@ def filter_haplotype_correlated_principal_components(principal_components, haplo
                 f'{chrom}:{pos/1e6:.1f} '
                 f'with R squared of {max_r2:.2f}'
             )
-    return principal_components[keep_pcs]
+    return keep_pcs
 
 
 def get_principal_components(exprs_mat, haplotypes,
-                             min_var_explained=0.01, max_pcs=50,
+                             min_var_explained=0.01, max_pcs=10,
                              max_pc_haplotype_var_explained=0.05,
+                             max_fit_barcodes=10_000,
                              return_pca_transformer=False,
-                             rng=None):
+                             rng=DEFAULT_RNG):
     if rng is None:
         random_state = np.random.RandomState(DEFAULT_RANDOM_SEED)
+        rng = np.random.default_rng(DEFAULT_RANDOM_SEED)
     else:
         random_state = np.random.RandomState(rng.integers(1000))
+    if exprs_mat.shape[1] > max_fit_barcodes:
+        sample_barcodes = rng.choice(exprs_mat.columns.values, size=max_fit_barcodes, replace=False)
+    else:
+        sample_barcodes = exprs_mat.columns.values
     pca = PCA(n_components=max_pcs, svd_solver='arpack', random_state=random_state)
-    principal_components = pca.fit_transform(exprs_mat.T)
+    pca = pca.fit(exprs_mat.T.loc[sample_barcodes])
+    principal_components = pca.transform(exprs_mat.T)
     stop_idx = max_pcs - np.searchsorted(
         pca.explained_variance_ratio_[::-1],
         min_var_explained
@@ -52,14 +59,14 @@ def get_principal_components(exprs_mat, haplotypes,
     )
     tot_ve = pca.explained_variance_ratio_[:stop_idx].sum() * 100
     log.info(f'Identified {stop_idx} principal components explaining {tot_ve:.2f}% of variance')
-    filtered_principal_components = filter_haplotype_correlated_principal_components(
-        principal_components, haplotypes, max_pc_haplotype_var_explained
+    filtered_pc_columns = filter_haplotype_correlated_principal_components(
+        principal_components.loc[sample_barcodes],
+        haplotypes.loc[sample_barcodes],
+        max_pc_haplotype_var_explained
     )
 
     if not return_pca_transformer:
-        return filtered_principal_components
-
-    filtered_pc_columns = filtered_principal_components.columns
+        return principal_components[filtered_pc_columns]
 
     def _pca_transform(new_exprs_mat):
         new_principal_components = pd.DataFrame(
@@ -69,4 +76,4 @@ def get_principal_components(exprs_mat, haplotypes,
         )
         return new_principal_components[filtered_pc_columns]
 
-    return filtered_principal_components, _pca_transform
+    return principal_components[filtered_pc_columns], _pca_transform

@@ -38,7 +38,8 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
         cb_stats = None
         cb_whitelist = None
     exprs_mat = read_expression_matrix(
-        exprs_mat_dir, cb_whitelist, rel_min_cells_exprs=min_cells_exprs
+        exprs_mat_dir, cb_whitelist,
+        rel_min_cells_exprs=min_cells_exprs
     )
     log.info(f'Identified {len(exprs_mat)} genes to be tested')
 
@@ -46,7 +47,7 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
     log.info(f'Read haplotype information in {haplotypes.bin_size/1e3:.0f} kb bins')
     log.info(f'There are {len(haplotypes.nbins)} chromosomes and '
              f'{sum(haplotypes.nbins.values())} bins to be tested')
-    haplotypes = haplotypes.to_frame().loc[cb_whitelist]
+    haplotypes = haplotypes.to_frame(dtype=np.float16).loc[cb_whitelist]
 
     principal_components = get_principal_components(
         exprs_mat, haplotypes,

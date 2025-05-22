@@ -1,4 +1,5 @@
 import os
+import shutil
 from copy import copy
 import logging
 import itertools as it
@@ -11,11 +12,14 @@ import statsmodels.api as sm
 import joblib
 
 from snco.main.logger import progress_bar
+from snco.defaults import DEFAULT_RANDOM_SEED
 from . import utils
 
 log = logging.getLogger('sneqtl')
 
 LOD = 2 * np.log(10)
+DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
+HAPLO_R_MAX_SAMPLE_SIZE = 5000
 
 
 def null_model_covariates(exprs_mat):
@@ -30,11 +34,11 @@ def likelihood_ratio(lln, llf):
     return -2 * (lln - llf)
 
 
-def compare_lr_test(m_full, m_nest):
-    
-    Ln, Lf = m_nest.llf, m_full.llf
-    dfn, dff = m_nest.df_model, m_full.df_model
-    
+def compare_lr_test(m_full, Ln, dfn):
+
+    Lf = m_full.llf
+    dff = m_full.df_model
+
     chi2_stat = likelihood_ratio(Ln, Lf)
     p = stats.chi2.sf(chi2_stat, dff - dfn)
 
@@ -42,10 +46,12 @@ def compare_lr_test(m_full, m_nest):
 
 
 def fit_model(gene_exprs, variables, model_type='ols'):
+    X = variables.astype(np.float64, copy=True)
+    y = gene_exprs.astype(np.float64, copy=True)
     if model_type == 'ols':
-        m = sm.OLS(gene_exprs, variables, hasconst=True)
+        m = sm.OLS(y, X, hasconst=True)
     elif model_type == 'logit':
-        m = sm.Logit(gene_exprs, variables)
+        m = sm.Logit(y, X)
     else:
         raise ValueError('unknown model type')
     # statsmodels ResultsWrapper.__getattribute__ is very slow, using _results bypasses it
@@ -94,7 +100,7 @@ class SNeQTLAnalysis:
     def __init__(self, exprs_mat, haplotypes, cb_whitelist=None, covariates=None,
                  interacting_variables=None, parental_genotypes=None, control_haplotypes=None,
                  interacting_haplotypes=None, control_cis_haplotype=False,
-                 gene_locs=None, control_haplotypes_r2=0.95):
+                 gene_locs=None, control_haplotypes_r2=0.95, rng=DEFAULT_RNG):
         
         (exprs_mat, haplotypes, covariates,
          interacting_variables, parental_genotypes) = utils.align_input(
@@ -104,8 +110,9 @@ class SNeQTLAnalysis:
 
         self.exprs_mat = exprs_mat
         self.haplotypes = haplotypes
-        covariates = covariates
+        self.covariates = covariates
         self.model_type = 'ols'
+        self._rng = rng
         self._gene_specific_covariates = {}
         self._haplotype_specific_variables = {}
         self._nested_models = {}
@@ -115,7 +122,6 @@ class SNeQTLAnalysis:
         self._haplo_r = None
         self._haplo_r2 = None
         self._store_r2 = True if control_cis_haplotype else False
-
 
         self.interacting_variables = utils.get_dummies(interacting_variables)
         if not parental_genotypes.empty:
@@ -169,6 +175,14 @@ class SNeQTLAnalysis:
         else:
             self.covariates = sm.add_constant(self.covariates)
 
+        if not np.all(np.isfinite(self.covariates)):
+            raise ValueError('Covariates contain NaNs or Infs')
+
+        rank = np.linalg.matrix_rank(self.covariates)
+        log.debug(f'Covariate matrix shape: {self.covariates.shape}, rank: {rank}')
+        if rank < self.covariates.shape[1]:
+            log.warn('Covariate matrix is rank-deficient')
+
         if control_cis_haplotype and gene_locs is None:
             raise ValueError('when control_cis_haplotype is True, gene_locs must be provided')
         self.control_cis_haplotype = control_cis_haplotype
@@ -177,10 +191,23 @@ class SNeQTLAnalysis:
 
         self.test_positions = np.arange(len(self.param_names))
 
-    def haplotype_variables(self, chrom, pos):
-        try:
+    def haplotype_variables(self, chrom, pos, cache=True):
+        if (chrom, pos) in self._haplotype_specific_variables:
             haplo_variables = self._haplotype_specific_variables[(chrom, pos)]
-        except KeyError:
+        elif hasattr(self, '_haplo_memmap_info') and (chrom, pos) in self._haplo_memmap_info:
+            if not hasattr(self, '_haplo_memmap_array'):
+                self._haplo_memmap_array = np.load(self._haplo_memmap_path, mmap_mode='r')
+            start, end = self._haplo_memmap_info[(chrom, pos)]
+            columns = self.param_names
+            index = self.haplotypes.index
+            haplo_variables = pd.DataFrame(
+                self._haplo_memmap_array[start:end],
+                index=index,
+                columns=columns
+            )
+            if cache:
+                self._haplotype_specific_variables[(chrom, pos)] = haplo_variables
+        else:
             haplo = self.haplotypes.loc[:, (chrom, pos)]
             haplo_variables = haplo.rename('haplo').to_frame()
             if not self.parental_genotypes.empty:
@@ -195,7 +222,8 @@ class SNeQTLAnalysis:
                 haplo_variables = utils.expanding_mul(
                     haplo_variables, self.interacting_haplotype_variables
                 )
-            self._haplotype_specific_variables[(chrom, pos)] = haplo_variables
+            if cache:
+                self._haplotype_specific_variables[(chrom, pos)] = haplo_variables
         return haplo_variables
 
     def get_closest_haplotype(self, chrom, pos):
@@ -222,7 +250,7 @@ class SNeQTLAnalysis:
 
     def nested_model(self, gene_id):
         try:
-            m_nest = self._nested_models[gene_id]
+            llf, df_model = self._nested_models[gene_id]
         except KeyError:
             gene_exprs = self.exprs_mat.loc[gene_id]
             m_nest = fit_model(
@@ -230,8 +258,10 @@ class SNeQTLAnalysis:
                 self.get_covariates(gene_id).values,
                 model_type = self.model_type
             )
-            self._nested_models[gene_id] = m_nest
-        return m_nest
+            llf = m_nest.llf
+            df_model = m_nest.df_model
+            self._nested_models[gene_id] = (llf, df_model)
+        return llf, df_model
 
     def full_model(self, gene_id, chrom, pos):
         gene_exprs = self.exprs_mat.loc[gene_id]
@@ -249,15 +279,16 @@ class SNeQTLAnalysis:
         lods = []
         pvals = []
 
-        cov = np.diag(m_full.normalized_cov_params)
-        invcov = 1 / (cov[test_pos] * m_full.scale)
+        scale = max(m_full.scale, 1e-8)  # Avoid division by zero
+        cov_diag = np.diag(m_full.normalized_cov_params)
+        cov_diag = np.where(np.isfinite(cov_diag), cov_diag, 1.0)  # fallback
+        invcov = 1 / (cov_diag[test_pos] * scale)
 
         coefs = m_full.params[test_pos]
         chi2 = coefs ** 2 * invcov
         lods = chi2 / LOD
         pvals = m_full.pvalues[test_pos]
         return lods, pvals, coefs
-
 
     @property
     def param_names(self):
@@ -294,9 +325,17 @@ class SNeQTLAnalysis:
     @property
     def haplo_r(self):
         if self._haplo_r is None:
+            if self.haplotypes.shape[0] > HAPLO_R_MAX_SAMPLE_SIZE:
+                haplotypes_sample = self.haplotypes.sample(
+                    n=HAPLO_R_MAX_SAMPLE_SIZE,
+                    replace=False,
+                    random_state=self._rng
+                )
+            else:
+                haplotypes_sample = self.haplotypes
             haplo_r = {
                 chrom: h.T.corr(method='pearson')
-                for chrom, h in self.haplotypes.T.groupby(level='chrom')
+                for chrom, h in haplotypes_sample.T.groupby(level='chrom')
             }
             if self._store_r2:
                 self._haplo_r = haplo_r
@@ -350,9 +389,9 @@ class SNeQTLAnalysis:
         return results
 
     def run_single_test(self, gene_id, chrom, pos, as_series=True):
-        m_nest = self.nested_model(gene_id)
+        m_nest_llf, m_nest_df = self.nested_model(gene_id)
         m_full = self.full_model(gene_id, chrom, pos)
-        lrt_res = compare_lr_test(m_full, m_nest)
+        lrt_res = compare_lr_test(m_full, m_nest_llf, m_nest_df)
         lods, pvals, coefs = self.parameter_specific_statistics(m_full)
         res = [gene_id, chrom, pos, *lrt_res, *it.chain(*zip(lods, pvals, coefs))]
         if as_series:
@@ -368,37 +407,114 @@ class SNeQTLAnalysis:
             results = self.apply_fwer_correction(results)
         return results
 
+    def _memmap_dataframes(self, tmpdir):
+        os.makedirs(tmpdir, exist_ok=True)
+        self._memmap_paths = {}
+
+        for attr, val in self.__dict__.items():
+            if isinstance(val, pd.DataFrame) and val.memory_usage(index=False).sum() > 10e6:
+                path_prefix = os.path.join(tmpdir, attr)
+                data_path = path_prefix + '.npy'
+                log.debug(f'Memmapping {attr} to {data_path}')
+                index_path = path_prefix + '_index.pickle'
+                columns_path = path_prefix + '_columns.pickle'
+                np.save(data_path, val.values)
+                joblib.dump(val.index, index_path)
+                joblib.dump(val.columns, columns_path)
+                self._memmap_paths[attr] = (data_path, index_path, columns_path)
+
+    def _memmap_haplotype_variables(self, tmpdir):
+        os.makedirs(tmpdir, exist_ok=True)
+        self._haplo_memmap_info = {}
+
+        testable_positions = self.testable_positions()
+        columns = self.param_names
+        n_rows = len(self.haplotypes)
+        n_cols = len(columns)
+        n_blocks = len(testable_positions)
+
+        data_path = os.path.join(tmpdir, 'haplo_vars_all.npy')
+        shape = (n_blocks * n_rows, n_cols)
+        mmap = np.lib.format.open_memmap(data_path, mode='w+', dtype=np.float32, shape=shape)
+
+        offset = 0
+        with progress_bar(testable_positions, label='Memmapping haplotype variables') as progress:
+            for chrom, pos in progress:
+                df = self.haplotype_variables(chrom, pos, cache=False)
+                block = df.values.astype(np.float32)
+
+                start = offset
+                end = offset + block.shape[0]
+                mmap[start:end, :] = block
+
+                self._haplo_memmap_info[(chrom, pos)] = (start, end)
+                offset = end
+
+        self._haplo_memmap_path = data_path
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        for attr in getattr(self, '_memmap_paths', {}):
+            state[attr] = None  # Don't pickle the actual DataFrame
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__ = state
+        for attr, (data_path, index_path, columns_path) in self._memmap_paths.items():
+            memmap = np.load(data_path, mmap_mode='r')
+            index = joblib.load(index_path)
+            columns = joblib.load(columns_path)
+            self.__dict__[attr] = pd.DataFrame(memmap, index=index, columns=columns)
+
     def run_all_genes(self, genewise_fdr_correction=True, haplowise_fwer_correction=True, processes=1):
 
-        tmp_fh, tmp_fn = tempfile.mkstemp()
-        joblib.dump(self, tmp_fn)
+        orig_env = {
+            'OMP_NUM_THREADS': os.environ.get('OMP_NUM_THREADS'),
+            'OPENBLAS_NUM_THREADS': os.environ.get('OPENBLAS_NUM_THREADS'),
+            'MKL_NUM_THREADS': os.environ.get('MKL_NUM_THREADS'),
+        }
 
-        with tempfile.TemporaryDirectory() as o_dir:
-            
-            def _run_gene_chunk(gene_ids):
-                e = joblib.load(tmp_fn)
-                for g_id in gene_ids:
-                    res = e.run_gene(g_id)
-                    joblib.dump(res, os.path.join(o_dir, f'{g_id}.pickle'))
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            os.environ['OMP_NUM_THREADS'] = '1'
+            os.environ['OPENBLAS_NUM_THREADS'] = '1'
+            os.environ['MKL_NUM_THREADS'] = '1'
+            self._memmap_dataframes(tmp_dir)
+            self._memmap_haplotype_variables(tmp_dir)
+            pkl_fn = os.path.join(tmp_dir, 'analysis.pickle')
+            joblib.dump(self, pkl_fn)
 
-            with joblib.Parallel(n_jobs=processes, backend='loky') as pool:
-                gene_progress = progress_bar(
-                    np.array_split(self.gene_ids, min(processes * 4, len(self.gene_ids))),
-                    label='Running eQTL',
-                    item_show_func=lambda g_ids: str(g_ids[0]) if g_ids is not None else ''
-                )
-                with gene_progress:
-                    pool(
-                        joblib.delayed(_run_gene_chunk)(gene_id_chunk)
-                        for gene_id_chunk in gene_progress
+            with tempfile.TemporaryDirectory() as o_dir:
+
+                def _run_gene_chunk(gene_ids):
+                    e = joblib.load(pkl_fn)
+                    for g_id in gene_ids:
+                        res = e.run_gene(g_id)
+                        joblib.dump(res, os.path.join(o_dir, f'{g_id}.pickle'))
+
+                with joblib.Parallel(n_jobs=processes, backend='loky') as pool:
+                    gene_progress = progress_bar(
+                        np.array_split(self.gene_ids, min(processes * 4, len(self.gene_ids))),
+                        label='Running eQTL',
+                        item_show_func=lambda g_ids: str(g_ids[0]) if g_ids is not None else ''
                     )
-            results = pd.concat((
-                joblib.load(os.path.join(o_dir, f'{g_id}.pickle'))
-                for g_id in self.gene_ids
-            ), axis=0, ignore_index=True)
-
-        os.close(tmp_fh)
-        os.remove(tmp_fn)
+                    with gene_progress:
+                        pool(
+                            joblib.delayed(_run_gene_chunk)(gene_id_chunk)
+                            for gene_id_chunk in gene_progress
+                        )
+                results = pd.concat((
+                    joblib.load(os.path.join(o_dir, f'{g_id}.pickle'))
+                    for g_id in self.gene_ids
+                ), axis=0, ignore_index=True)
+        finally:
+            log.debug(f'Removing memmap temp dir: {tmp_dir}')
+            shutil.rmtree(tmp_dir)
+            for k, v in orig_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
         if genewise_fdr_correction:
             results = self.apply_fdr_correction(results)

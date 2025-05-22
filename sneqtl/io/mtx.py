@@ -42,11 +42,15 @@ def lognormalise_exprs(mtx, alpha=0.25):
 
 def read_expression_matrix(exprs_mat_dir, cb_whitelist=None,
                            rel_min_cells_exprs=0.02,
-                           abs_min_cells_exprs=100):
+                           abs_min_cells_exprs=100,
+                           min_variance=1e-4):
     exprs_mat = read_matrix_market_as_pd_matrix(exprs_mat_dir, cb_whitelist, as_dense=True)
     exprs_mat, sf = lognormalise_exprs(exprs_mat)
     min_cells_exprs = max(exprs_mat.shape[1] * rel_min_cells_exprs, abs_min_cells_exprs)
     exprs_mat = exprs_mat[(exprs_mat > 0).sum(axis=1) > min_cells_exprs]
+
+    gene_vars = exprs_mat.var(axis=1)
+    exprs_mat = exprs_mat.loc[gene_vars > min_variance]
     return exprs_mat
 
 

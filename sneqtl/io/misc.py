@@ -4,7 +4,7 @@ import pandas as pd
 
 def read_cb_stats(cb_stats_fn, cb_filter_exprs=None):
     cb_stats = pd.read_csv(
-        cb_stats_fn, index_col=0, sep='\t',
+        cb_stats_fn, index_col='cb', sep='\t',
     )
     if cb_filter_exprs is not None:
         cb_stats = cb_stats.query(cb_filter_exprs)
