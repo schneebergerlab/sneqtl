@@ -102,6 +102,13 @@ class VariableManager:
 
         return self.__class__(data, index=new_index, columns=new_columns)
 
+    def drop_uninformative(self, tol=1e-8):
+        variances = np.var(self._data, axis=0)
+        informative_mask = variances > tol
+        new_data = self._data[:, informative_mask]
+        new_columns = [k for k, keep in zip(self.columns, informative_mask) if keep]
+        return self.__class__(new_data, index=self.index, columns=new_columns)
+
     @property
     def shape(self):
         return self._data.shape
