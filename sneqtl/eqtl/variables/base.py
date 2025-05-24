@@ -36,6 +36,8 @@ class _LocIndexer:
             row_key, col_key = key
             row_idx = self._to_idx(self.parent._index_map, row_key)
             col_idx = self._to_idx(self.parent._column_map, col_key)
+            if row_idx == slice(None):
+                return self.parent._data[row_idx, col_idx]
             return self.parent._data[np.ix_(
                 row_idx if isinstance(row_idx, list) else [row_idx],
                 col_idx if isinstance(col_idx, list) else [col_idx]
@@ -48,23 +50,26 @@ class _LocIndexer:
 class VariableManager:
 
     def __init__(self, data: np.ndarray, index=None, columns=None, dtype=np.float32):
-        self._data = data.astype(dtype)
+        self._data = data.astype(dtype, copy=False)
         if not len(set(index)) == len(index) or not len(index) == data.shape[0]:
             raise ValueError('Index values must be unique and match data length')
         if not len(set(columns)) == len(columns) or not len(columns) == data.shape[1]:
             raise ValueError('Column values must be unique and match data length')
         self._index_map = {k: i for i, k in enumerate(index)}
         self._column_map = {k: i for i, k in enumerate(columns)}
+        self._memmap_prefix = None
 
         self.iloc = _iLocIndexer(self)
         self.loc = _LocIndexer(self)
 
-        self.is_memmap = isinstance(data, np.memmap)
+    @property
+    def is_memmap(self):
+        return isinstance(self.data, np.memmap)
 
     @classmethod
     def from_dataframe(cls, df, dtype=np.float32):
         return cls(
-            df.to_numpy(),
+            df.to_numpy(copy=False, dtype=dtype),
             index=df.index.tolist(),
             columns=df.columns.tolist(),
         )
@@ -127,7 +132,7 @@ class VariableManager:
     def __repr__(self):
         return f'<{self.__class__.__name__} shape={self.shape} memmap={self.is_memmap}>'
 
-    def memmap(self, path_prefix, load=False):
+    def memmap(self, path_prefix):
         if self.is_memmap:
             log.warning(f'{self} is already memmapped')
         log.debug(f'memmapping {self} to {path_prefix}.npy')
@@ -139,9 +144,7 @@ class VariableManager:
         joblib.dump(list(self.index), index_path)
         joblib.dump(list(self.columns), columns_path)
 
-        if load:
-            return self.__class__.load_memmap(path_prefix)
-        return self
+        return self.__class__.load_memmap(path_prefix)
 
     @classmethod
     def load_memmap(cls, path_prefix: str):
@@ -153,29 +156,6 @@ class VariableManager:
         index = joblib.load(index_path)
         columns = joblib.load(columns_path)
 
-        return cls(data, index=index, columns=columns)
-
-    @contextmanager
-    def memmap_context(self, path_prefix=None, load=False):
-        if path_prefix is None:
-            tmpdir = tempfile.mkdtemp()
-            path_prefix = os.path.join(tmpdir, self.__class__.__name__)
-            cleanup_tmpdir = True
-        else:
-            cleanup_tmpdir = False
-        try:
-            mm = self.memmap(path_prefix, load=load)
-            yield mm
-        finally:
-            if mm.is_memmap:
-                del mm._data
-            for suffix in ['.npy', '_index.pickle', '_columns.pickle']:
-                try:
-                    os.remove(path_prefix + suffix)
-                except FileNotFoundError:
-                    pass
-            if cleanup_tmpdir:
-                try:
-                    os.rmdir(tmpdir)
-                except OSError:
-                    pass
+        mm = cls(data, index=index, columns=columns)
+        mm._memmap_prefix = path_prefix
+        return mm

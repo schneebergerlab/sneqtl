@@ -21,13 +21,13 @@ def read_matrix_market(mtx_dir,
 
 
 def read_matrix_market_as_pd_matrix(mtx_dir, cb_whitelist=None,
-                                    as_dense=True, dense_dtype=np.float32):
+                                    as_dense=True, dtype=np.float32):
     features, barcodes, mtx = read_matrix_market(mtx_dir)
     mtx = pd.DataFrame.sparse.from_spmatrix(mtx, columns=barcodes, index=features)
     if cb_whitelist is not None:
         mtx = mtx.loc[:, mtx.columns.isin(cb_whitelist)]
     if as_dense:
-        mtx = mtx.sparse.to_dense().astype(dense_dtype)
+        mtx = mtx.sparse.to_dense().astype(dense_dtype, copy=False)
     return mtx
 
 
@@ -43,8 +43,11 @@ def lognormalise_exprs(mtx, alpha=0.25):
 def read_expression_matrix(exprs_mat_dir, cb_whitelist=None,
                            rel_min_cells_exprs=0.02,
                            abs_min_cells_exprs=100,
-                           min_variance=1e-4):
-    exprs_mat = read_matrix_market_as_pd_matrix(exprs_mat_dir, cb_whitelist, as_dense=True)
+                           min_variance=1e-4,
+                           dtype=np.float32):
+    exprs_mat = read_matrix_market_as_pd_matrix(
+        exprs_mat_dir, cb_whitelist,
+        as_dense=True, dtype=dtype)
     exprs_mat, sf = lognormalise_exprs(exprs_mat)
     min_cells_exprs = max(exprs_mat.shape[1] * rel_min_cells_exprs, abs_min_cells_exprs)
     exprs_mat = exprs_mat[(exprs_mat > 0).sum(axis=1) > min_cells_exprs]

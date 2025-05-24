@@ -6,17 +6,6 @@ from .genotypes import ParentalGenotypesContainer
 from .haplotypes import HaplotypeVariables
 
 
-class InteractingVariables(VariableManager):
-
-    @property
-    def barcodes(self):
-        return self.index
-
-    @property
-    def variable_names(self):
-        return self.columns
-
-
 class HaplotypeInteractionVariables:
 
     def __init__(self, data, index, haplotypes, variable_names):
@@ -50,8 +39,9 @@ class HaplotypeInteractionVariables:
             yield hap, self._data[:, col_slice]
 
     @classmethod
-    def from_cross_product(cls, haplotype_variables, parental_genotypes=None, interacting_variables=None,
-                           memmap=False, memmap_path_prefix=None, memmap_load=False):
+    def from_cross_product(cls, haplotype_variables,
+                           parental_genotypes=None, interacting_variables=None,
+                           memmap=False, memmap_path_prefix=None):
 
         if not isinstance(haplotype_variables, HaplotypeVariables):
             raise ValueError('haplotype_variables should be of type HaplotypeVariables')
@@ -64,9 +54,9 @@ class HaplotypeInteractionVariables:
         if interacting_variables is None:
             interacting_variables = []
         for iv in interacting_variables:
-            if not isinstance(iv, InteractingVariables):
+            if not isinstance(iv, VariableManager):
                 raise ValueError(
-                    'All interacting_variables should be InteractingVariables'
+                    'All interacting_variables should be of type VariableManager'
                 )
             if haplotype_variables.index != iv.index:
                 raise ValueError('Index mismatch between haplotypes and interacting variables')
@@ -138,11 +128,8 @@ class HaplotypeInteractionVariables:
         # for memmapped arrays, we have some cleaning up to do
         cross_prod_results.flush()
         del cross_prod_results
-
-        if memmap_load:
-            return cls.load_memmap(memmap_path_prefix)
-
-        return None
+        # reload as read only
+        return cls.load_memmap(memmap_path_prefix)
 
     @classmethod
     def load_memmap(cls, path_prefix: str):

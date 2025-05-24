@@ -40,3 +40,11 @@ class ParentalGenotypesContainer:
         hap2 = VariableManager(hap2, index=barcodes, columns=all_haplotypes)
 
         return cls(hap1=hap1, hap2=hap2)
+
+    def reindex(self, index=None, columns=None):
+        hap1 = self.hap1.reindex(index, columns)
+        hap2 = self.hap2.reindex(index, columns)
+        return self.__class__(hap1, hap2)
+
+    def as_covariates(self):
+        return self.genotypes.reindex(columns=self.columns[1:])

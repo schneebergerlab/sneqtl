@@ -15,27 +15,29 @@ class Covariates(VariableManager):
 
     @classmethod
     def from_variables(cls, *, interacting_variables=None, parental_genotypes=None,
-                       control_haplotype_variables=None, base_covariates=None):
+                       covariate_haplotypes=None, base_covariates=None):
         columns = ['const',]
         indexes = []
         sections = []
 
-        if interacting_variables is not None:
-            iv = utils.get_numeric_variables(interacting_variables, drop_first=True)
+        if interacting_variables is None:
+            interacting_variables = []
+        for iv in interacting_variables:
+            iv = utils.get_numeric_variables(iv, drop_first=True)
             sections.append(iv._data)
             columns += iv.columns
             indexes.append(iv.index)
 
         if parental_genotypes is not None:
-            pg = utils.get_numeric_variables(parental_genotypes)
+            pg = parental_genotypes.as_covariates()
             sections.append(pg._data)
             columns += pg.columns
             indexes.append(pg.index)
 
-        if control_haplotype_variables is not None:
-            sections.append(control_haplotype_variables._data)
-            columns += control_haplotype_variables.columns
-            indexes.append(control_haplotype_variables.index)
+        if covariate_haplotypes is not None:
+            sections.append(covariate_haplotypes._data)
+            columns += covariate_haplotypes.columns
+            indexes.append(covariate_haplotypes.index)
 
         if base_covariates is not None:
             bc = utils.get_numeric_variables(base_covariates, drop_first=True)
@@ -44,7 +46,7 @@ class Covariates(VariableManager):
             indexes.append(bc.index)
 
         if not sections:
-            raise ValueError('No covariates provided')
+            return None
 
         index = indexes[0]
         if not all(np.array_equal(index, other_index) for other_index in indexes[1:]):
