@@ -7,6 +7,7 @@ import pandas as pd
 
 from snco.logger import progress_bar
 from .qtl import SinglePhenoQTLAnalysis
+from .memmap import MemmapManager
 
 from ..variables.base import VariableManager
 from ..variables.exprs import ExpressionVariables
