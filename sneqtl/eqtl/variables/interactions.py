@@ -27,16 +27,16 @@ class HaplotypeInteractionVariables(VariableManager):
     @classmethod
     def from_cross_product(cls, haplotype_variables,
                            parental_genotypes=None, interacting_variables=None,
-                           memmap_manager=None, memmap_dataset_name='haplotype_variables',
-                           dtype=np.float32):
+                           name=None, memmap_manager=None, dtype=np.float32):
 
         if not isinstance(haplotype_variables, HaplotypeVariables):
             raise ValueError('haplotype_variables should be of type HaplotypeVariables')
 
-        if parental_genotypes is not None and not isinstance(parental_genotypes, ParentalGenotypesContainer):
-            raise ValueError('parental_genotypes should be of type ParentalGenotypesContainer')
-        if haplotype_variables.index != parental_genotypes.genotypes.index:
-            raise ValueError('Index mismatch between haplotypes and parental genotypes')
+        if parental_genotypes is not None: 
+            if not isinstance(parental_genotypes, ParentalGenotypesContainer):
+                raise ValueError('parental_genotypes should be of type ParentalGenotypesContainer')
+            if haplotype_variables.index != parental_genotypes.genotypes.index:
+                raise ValueError('Index mismatch between haplotypes and parental genotypes')
 
         if interacting_variables is None:
             interacting_variables = []
@@ -62,12 +62,11 @@ class HaplotypeInteractionVariables(VariableManager):
             interaction_matrix = interaction_matrix.reshape(n_barcodes, -1)
             variable_names = [f'{v1}_{v2}' for v1 in variable_names for v2 in iv.columns]
 
-        # calculate the total size of cross product array we need to product
         n_interactions = len(variable_names)
 
         if memmap_manager is not None:
             cross_prod_results = memmap_manager.create_empty(
-                memmap_dataset_name,
+                name,
                 index=haplotype_variables.index,
                 columns=haplotype_variables.columns,
                 items=variable_names,
@@ -76,10 +75,11 @@ class HaplotypeInteractionVariables(VariableManager):
             )
         else:
             cross_prod_results = cls(
-                np.empty(shape=(n_barcodes, n_haplo_positions, n_iteractions), dtype=dtype),
+                np.empty(shape=(n_barcodes, n_haplo_positions, n_interactions), dtype=dtype),
                 index=haplotype_variables.index,
                 columns=haplotype_variables.columns,
                 items=variable_names,
+                name=name,
                 dtype=dtype,
             )
         cp_arr = cross_prod_results._data
@@ -89,11 +89,11 @@ class HaplotypeInteractionVariables(VariableManager):
             if parental_genotypes is not None:
                 hap1_vars = np.einsum('ij,ik->ijk', hap, parental_genotypes.hap1._data)
                 hap2_vars = np.einsum('ij,ik->ijk', 1 - hap, parental_genotypes.hap2._data)
-                hap_vars = (hap1_vars + hap2_vars).reshape(n_barcodes, 1, n_iteractions)
+                hap_vars = (hap1_vars + hap2_vars).reshape(n_barcodes, n_iteractions)
             else:
                 hap_vars = hap
             hap_vars = np.einsum('ij,ik->ijk', hap_vars, interaction_matrix)
-            hap_vars = hap_vars.reshape(n_barcodes, 1, n_interactions)
+            hap_vars = hap_vars.reshape(n_barcodes, n_interactions)
             cp_arr[:, i, ...] = hap_vars
 
         return cross_prod_results

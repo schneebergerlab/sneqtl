@@ -6,6 +6,8 @@ import tempfile
 
 import numpy as np
 
+from .variables.base import VariableManager 
+
 log = logging.getLogger('sneqtl')
 
 
@@ -16,32 +18,27 @@ class MemmapManager:
         if memmap_dir:
             self.memmap_dir = memmap_dir
             self.is_tmp = False
-        else:
+        elif memmap:
             self.memmap_dir = tempfile.mkdtemp()
             self.is_tmp = True
+        else:
+            self.memmap_dir = None
+            self.is_tmp = False
         self.memmap_prefixes = {}
         self.memmap_classes = {}
 
-    def as_memmap(self, dataset):
-        if dataset is None:
-            return None
-        dataset_name = dataset.name
-        if dataset.is_memmap:
-            self.memmap_prefixes[dataset_name] = dataset._memmap_prefix
-            self.memmap_classes[dataset_name] = dataset.__class__
-        elif self.memmap:
-            prefix = os.path.join(self.memmap_dir, dataset_name)
-            self.memmap_prefixes[dataset_name] = prefix
-            self.memmap_classes[dataset_name] = dataset.__class__
-            dataset = self.convert(dataset, prefix)
-        return dataset
+    def register(self, name, cls):
+        path_prefix = os.path.join(self.memmap_dir, name)
+        self.memmap_prefixes[name] = path_prefix
+        self.memmap_classes[name] = cls
+        return path_prefix
 
-    def convert(self, dataset, path_prefix):
+    def convert(self, dataset):
+        if not self.memmap:
+            return dataset
         dataset_name = dataset.name
-        if dataset.is_memmap:
-            log.warning(f'{self} is already memmapped')
-        log.debug(f'memmapping {self} to {path_prefix}.npy')
-        path_prefix = self.memmap_prefixes[dataset_name]
+        dataset_cls = dataset.__class__
+        path_prefix = self.register(dataset_name, dataset_cls)
         data_path = path_prefix + '.npy'
         index_path = path_prefix + '_index.pickle'
         columns_path = path_prefix + '_columns.pickle'
@@ -53,17 +50,21 @@ class MemmapManager:
         if dataset._item_map:
             joblib.dump(list(dataset.items), items_path)
 
-        return self.load_memmap(dataset_name)
+        return self.load(dataset_name)
 
-    def load_memmap(self, dataset_name):
-        path_prefix = self.memmap_prefixes[dataset_name]
-        cls = self.memmap_classes[dataset_name]
+    def load(self, dataset_name, mode='r', path_prefix=None, cls=None):
+        if not self.memmap:
+            raise ValueError('dataset is not memmapped')
+        if path_prefix is None:
+            path_prefix = self.memmap_prefixes[dataset_name]
+        if cls is None:
+            cls = self.memmap_classes[dataset_name]
         data_path = path_prefix + '.npy'
         index_path = path_prefix + '_index.pickle'
         columns_path = path_prefix + '_columns.pickle'
         items_path = path_prefix + '_items.pickle'
 
-        data = np.load(data_path, mmap_mode='r')
+        data = np.load(data_path, mmap_mode=mode)
         index = joblib.load(index_path)
         columns = joblib.load(columns_path)
         items = joblib.load(items_path) if os.path.exists(items_path) else None
@@ -74,17 +75,19 @@ class MemmapManager:
 
     def create_empty(self, dataset_name, index, columns, items=None,
                      dtype=np.float32, cls=VariableManager):
+        if dataset_name is None:
+            dataset_name = cls.__name__
         if items is None:
             shape = (len(index), len(columns))
         else:
             shape = (len(index), len(columns), len(items))
-        prefix = os.path.join(self.memmap_dir, dataset_name)
+        path_prefix = self.register(dataset_name, cls)
 
         if self.memmap:
-            data_path = prefix + '.npy'
-            index_path = prefix + '_index.pickle'
-            columns_path = prefix + '_columns.pickle'
-            items_path = prefix + '_items.pickle'
+            data_path = path_prefix + '.npy'
+            index_path = path_prefix + '_index.pickle'
+            columns_path = path_prefix + '_columns.pickle'
+            items_path = path_prefix + '_items.pickle'
     
             joblib.dump(list(index), index_path)
             joblib.dump(list(columns), columns_path)
@@ -95,12 +98,13 @@ class MemmapManager:
             )
         else:
             data = np.empty(shape=shape, dtype=dtype)
-        dataset = cls(data, index=index, columns=columns, items=items, dtype=dtype)
-        dataset._memmap_prefix = prefix
-        self.memmap_prefixes[dataset_name] = prefix
-        self.memmap_classes[dataset_name] = cls
+        dataset = cls(data, index=index, columns=columns, items=items,
+                      name=dataset_name, dtype=dtype)
+        dataset._memmap_prefix = path_prefix
         return dataset
 
     def remove_all(self):
         if self.is_tmp and os.path.isdir(self.memmap_dir):
             shutil.rmtree(self.memmap_dir)
+        self.memmap_prefixes = {}
+        self.memmap_classes = {}

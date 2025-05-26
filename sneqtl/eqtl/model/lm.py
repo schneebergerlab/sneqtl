@@ -1,4 +1,8 @@
+import numpy as np
+from scipy import stats
 import statsmodels.api as sm
+
+LOD = 2 * np.log(10)
 
 
 def likelihood_ratio(lln, llf):
@@ -20,15 +24,15 @@ def parameter_stats(m, n_tests):
     lods = []
     pvals = []
 
-    scale = max(m_full.scale, 1e-8)  # Avoid division by zero
-    cov_diag = np.diag(m_full.normalized_cov_params)
+    scale = max(m.scale, 1e-8)  # Avoid division by zero
+    cov_diag = np.diag(m.normalized_cov_params)
     cov_diag = np.where(np.isfinite(cov_diag), cov_diag, 1.0)  # fallback
     invcov = 1 / (cov_diag[:n_tests] * scale)
 
-    coefs = m_full.params[:n_tests]
+    coefs = m.params[:n_tests]
     chi2 = coefs ** 2 * invcov
     lods = chi2 / LOD
-    pvals = m_full.pvalues[:n_tests]
+    pvals = m.pvalues[:n_tests]
     return lods, pvals, coefs
 
 

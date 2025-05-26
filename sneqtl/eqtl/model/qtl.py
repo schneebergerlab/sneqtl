@@ -1,4 +1,5 @@
 from functools import cached_property
+import numpy as np
 
 from .lm import fit_model, compare_lr_test, parameter_stats
 from ..variables.covariates import Covariates
@@ -44,11 +45,11 @@ class SinglePhenoQTLAnalysis:
 
     def test_all_positions(self):
         res = []
-        pheno_name = self.pheno_name
         for (chrom, pos), haplo in self.haplotype_variables.iter_haplotypes():
             res.append(self.run_test(haplo))
         return SingleGeneResults(
             np.array(res),
             index=self.haplotype_variables.haplotypes,
             columns=self.result_colnames,
+            name=self.pheno_name
         )

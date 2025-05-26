@@ -27,7 +27,7 @@ def read_matrix_market_as_pd_matrix(mtx_dir, cb_whitelist=None,
     if cb_whitelist is not None:
         mtx = mtx.loc[:, mtx.columns.isin(cb_whitelist)]
     if as_dense:
-        mtx = mtx.sparse.to_dense().astype(dense_dtype, copy=False)
+        mtx = mtx.sparse.to_dense().astype(dtype, copy=False)
     return mtx
 
 

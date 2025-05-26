@@ -7,6 +7,8 @@ import tempfile
 import numpy as np
 import joblib
 
+from . import utils
+
 log = getLogger('sneqtl')
 
 
@@ -24,14 +26,13 @@ class _LocIndexer:
         self.ndim = parent._data.ndim
         self.shape = parent._data.shape
 
-    @staticmethod
-    def _to_idx(mapping, key, dim):
-        if key == slice(None):
-            return np.arange(self.shape[dim])
-        elif isinstance(key, list):
+    def _to_idx(self, mapping, key, dim):
+        if isinstance(key, (list, np.ndarray)):
             return [mapping[k] for k in key]
+        elif key == slice(None):
+            return np.arange(self.shape[dim])
         else:
-            return [mapping[key],]
+            return mapping[key]
 
     def __getitem__(self, key):
         if isinstance(key, tuple):
@@ -122,39 +123,68 @@ class VariableManager:
         return self._data[:, self._column_map[key], ...]
 
     def reindex(self, index=None, columns=None, items=None):
-        if self.is_memmap:
-            log.warning('reindexing a memmapped VariableManager will copy the data into memory')
-
-        row_idx = slice(None)
-        col_idx = slice(None)
-        item_idx = slice(None)
-
-        if index is not None:
-            row_idx = [self._index_map[i] for i in index]
-        if columns is not None:
-            col_idx = [self._column_map[c] for c in columns]
-        if items is not None and self._item_map is not None:
-            item_idx = [self._item_map[i] for i in items]
+        index = index if index is not None else slice(None)
+        columns = columns if columns is not None else slice(None)
+        items = items if items is not None else slice(None)
 
         if self._data.ndim == 3:
-            data = self.loc[row_idx, col_idx, item_idx]
+            data = self.loc[index, columns, items]
         else:
-            data = self.loc[row_idx, col_idx]
+            data = self.loc[index, columns]
 
         return self.__class__(
             data,
-            index=index if index is not None else self.index,
-            columns=columns if columns is not None else self.columns,
-            items=items if items is not None else (self.items if self.items else None)
+            index=index if index != slice(None) else self.index,
+            columns=columns if columns != slice(None) else self.columns,
+            items=items if items != slice(None) else self.items,
+            name=self.name,
+            dtype=data.dtype
         )
+
+    def as_numeric(self, axis=0, drop_first=True, dtype=np.float32):
+        if axis not in (0, 1):
+            raise ValueError('axis must be 0 or 1')
+
+        variables = self
+        if axis == 1:
+            variables = variables.T
+
+        n_samples, n_features = variables.shape
+        index = variables.index
+        dummy_list = []
+        columns = []
+
+        for i in range(n_features):
+            col = variables.iloc[:, i]
+            col_name = variables.columns[i]
+            if utils.is_numeric(col):
+                col = col.reshape(-1, 1).astype(dtype)
+                dummy_list.append(col)
+                columns.append(col_name)
+            else:
+                dummies, categories = utils.get_dummies(col, drop_first=drop_first, dtype=dtype)
+                dummy_list.append(dummies)
+                columns += [f'{col_name}_{cat}' for cat in categories]
+
+        data = np.concatenate(dummy_list, axis=1)
+
+        if axis == 1:
+            data = data.T
+            columns = index
+            index = columns
+
+        return VariableManager(data, index=index, columns=columns)
+
+    def as_covariates(self):
+        return self
 
     def drop_uninformative(self, tol=1e-8, axis=0):
         if self._data.ndim == 2:
             axis_map = {0: self.index, 1: self.columns}
-            axis_reduce = {0: 0, 1: 1}
+            axis_reduce = {0: 1, 1: 0}
         elif self._data.ndim == 3:
             axis_map = {0: self.index, 1: self.columns, 2: self.items}
-            axis_reduce = {0: (0, 2), 1: (0, 2), 2: (0, 1)}
+            axis_reduce = {0: (1, 2), 1: (0, 2), 2: (0, 1)}
         else:
             raise ValueError('Unsupported data dimensionality')
 
@@ -164,23 +194,36 @@ class VariableManager:
         mask = variances > tol
         axis_values = [k for k, keep in zip(axis_label, mask) if keep]
 
-        slicers = [slice(None)] * self._data.ndim
-        slicers[axis] = mask
-        new_data = self._data[tuple(slicers)]
-
-        kwargs = dict(index=self.index, columns=self.columns, items=self.items)
+        kwargs = dict(index=None, columns=None, items=None)
         if axis == 0:
             kwargs['index'] = axis_values
         elif axis == 1:
             kwargs['columns'] = axis_values
         elif axis == 2:
             kwargs['items'] = axis_values
+        return self.reindex(**kwargs)
 
-        return self.__class__(new_data, **kwargs)
+    def get_correlated(self, other, min_r2):
+        r2 = utils.corrwith(other._data, self._data, axis=0) ** 2
+        correlated = r2.max(axis=0) >= min_r2
+        return self.reindex(
+            columns=[col for k, col in zip(correlated, self.columns) if k]
+        )
+
+    def filter_correlated(self, other, max_r2):
+        r2 = utils.corrwith(other._data, self._data, axis=0) ** 2
+        keep = r2.max(axis=0) <= max_r2
+        return self.reindex(
+            columns=[col for k, col in zip(keep, self.columns) if k]
+        )
 
     @property
     def shape(self):
         return self._data.shape
+
+    @property
+    def size(self):
+        return self._data.size
 
     def transpose(self):
         if self._data.ndim == 2:
@@ -200,6 +243,4 @@ class VariableManager:
 
     def __repr__(self):
         dims = f'shape={self.shape}'
-        if self._item_map:
-            dims += f' items={len(self._item_map)}'
-        return f'<{self.__class__.__name__} {dims} memmap={self.is_memmap}>'
+        return f'<{self.__class__.__name__} {dims} name={self.name} memmap={self.is_memmap}>'

@@ -1,5 +1,5 @@
+from operator import attrgetter
 import numpy as np
-from .base import VariableManager
 
 
 def is_numeric(arr):
@@ -19,38 +19,17 @@ def get_dummies(arr, categories=None, drop_first=True, dtype=np.float32):
     return dummies, categories
 
 
-def get_numeric_variables(variables, axis=0, drop_first=True, dtype=np.float32):
-    if axis not in (0, 1):
-        raise ValueError('axis must be 0 or 1')
-
-    if axis == 1:
-        variables = variables.T
-
-    n_samples, n_features = variables.shape
-    index = variables.index
-    dummy_list = []
-    columns = []
-
-    for i in range(n_features):
-        col = variables.iloc[:, i]
-        col_name = variables.columns[i]
-        if is_numeric(col):
-            col = col.reshape(-1, 1).astype(dtype)
-            dummy_list.append(col)
-            columns.append(col_name)
-        else:
-            dummies, categories = get_dummies(col, drop_first=drop_first, dtype=dtype)
-            dummy_list.append(dummies)
-            columns += [f'{col_name}_{cat}' for cat in categories]
-
-    data = np.concatenate(dummy_list, axis=1)
-
-    if axis == 1:
-        data = data.T
-        columns = index
-        index = columns
-
-    return VariableManager(data, index=index, columns=columns)
+def check_aligned(*args, axis=0):
+    if len(args) < 2:
+        raise ValueError('At least two arrays should be provided')
+    axisgetter = attrgetter('index') if axis == 0 else attrgetter('columns')
+    reference_index = axisgetter(args[0])
+    for arr in args[1:]:
+        if arr is None:
+            continue
+        if axisgetter(arr) != reference_index:
+            raise ValueError('Not all variable indexes are aligned')
+    return reference_index
 
 
 def corrwith(arr1, arr2, axis=0):

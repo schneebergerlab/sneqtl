@@ -4,7 +4,7 @@ import numpy as np
 
 from snco.records import PredictionRecords
 from .base import VariableManager
-from .utils import corrwith
+
 
 class HaplotypeVariables(VariableManager):
 
@@ -17,9 +17,13 @@ class HaplotypeVariables(VariableManager):
         return self.columns
 
     @classmethod
-    def from_prediction_records(cls, prediction_records, dtype=np.float32):
-        if not isinstance(prediction_records, PredictionRecords):
-            raise TypeError('prediction_records must be a snco.records.PredictionRecords object')
+    def read_prediction_records(cls, json_fn, cb_whitelist=None,
+                                barcode_query=None, dtype=np.float32):
+        prediction_records = PredictionRecords.read_json(json_fn)
+        if cb_whitelist is not None:
+            prediction_records.filter(cb_whitelist, inplace=True)
+        if barcode_query is not None:
+            prediction_records = prediction_records.query(barcode_query)
         barcodes = prediction_records.barcodes
         bin_size = prediction_records.bin_size
         haplotypes = [
@@ -57,9 +61,5 @@ class HaplotypeVariables(VariableManager):
         if not remove_correlated:
             return control_haplotypes, self
 
-        r2 = corrwith(data, self._data, axis=0) ** 2
-        keep_haps = r2.max(axis=0) <= max_r2
-        filtered_haplotypes = self.reindex(
-            columns=[col for k, col in zip(keep_haps, self.columns) if k]
-        )
-        return control_haplotypes, filtered_haplotypes
+        filtered = self.filter_correlated(control_haplotypes, max_r2)
+        return control_haplotypes, filtered

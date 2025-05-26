@@ -17,6 +17,14 @@ class ParentalGenotypesContainer:
         self.hap1 = hap1.reindex(columns=self.genotypes.columns)
         self.hap2 = hap2.reindex(columns=self.genotypes.columns)
 
+    @property
+    def index(self):
+        return self.genotypes.index
+
+    @property
+    def columns(self):
+        return self.genotypes.columns
+
     @classmethod
     def from_genotype_dict(cls, parental_genotypes: dict):
         barcodes = list(parental_genotypes.keys())
@@ -47,4 +55,4 @@ class ParentalGenotypesContainer:
         return self.__class__(hap1, hap2)
 
     def as_covariates(self):
-        return self.genotypes.reindex(columns=self.columns[1:])
+        return self.genotypes.reindex(columns=list(self.columns[1:]))
