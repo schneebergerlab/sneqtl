@@ -6,18 +6,7 @@ from .genotypes import ParentalGenotypesContainer
 from .haplotypes import HaplotypeVariables
 
 
-class HaplotypeInteractionVariables:
-
-    def __init__(self, data, index, haplotypes, variable_names):
-        self._data = data
-        self._variable_names = variable_names
-        N = len(variable_names)
-        self._haplo_column_map = {
-            hap: slice(i * N, (i + 1) * N) for i, hap in enumerate(haplotypes)
-        }
-        self._index_map = {k: i for i, k in enumerate(index)}
-        self._column_map = {i: i for i in range(len(haplotypes) * N)}
-        self.is_memmap = isinstance(data, np.memmap)
+class HaplotypeInteractionVariables(VariableManager):
 
     @property
     def barcodes(self):
@@ -25,23 +14,21 @@ class HaplotypeInteractionVariables:
 
     @property
     def haplotypes(self):
-        return tuple(self._haplo_column_map.keys())
+        return tuple(self._column_map.keys())
 
     @property
     def variable_names(self):
-        return tuple(self._variable_names)
-
-    def __getitem__(self, haplotype):
-        return self._data[:, self._haplo_column_map[haplotype]]
+        return tuple(self._item_map.keys())
 
     def iter_haplotypes(self):
-        for hap, col_slice in self._haplo_column_map.items():
-            yield hap, self._data[:, col_slice]
+        for hap, i in self._column_map.items():
+            yield hap, self._data[:, i, ...]
 
     @classmethod
     def from_cross_product(cls, haplotype_variables,
                            parental_genotypes=None, interacting_variables=None,
-                           memmap=False, memmap_path_prefix=None):
+                           memmap_manager=None, memmap_dataset_name='haplotype_variables',
+                           dtype=np.float32):
 
         if not isinstance(haplotype_variables, HaplotypeVariables):
             raise ValueError('haplotype_variables should be of type HaplotypeVariables')
@@ -61,9 +48,6 @@ class HaplotypeInteractionVariables:
             if haplotype_variables.index != iv.index:
                 raise ValueError('Index mismatch between haplotypes and interacting variables')
 
-        if memmap and memmap_path_prefix is None:
-            raise ValueError('When memmap is True, a memmap_path_prefix should be provided')
-
         if parental_genotypes is not None:
             variable_names = [f'haplo_{geno}' for geno in parental_genotypes.genotype_names]
         else:
@@ -80,60 +64,36 @@ class HaplotypeInteractionVariables:
 
         # calculate the total size of cross product array we need to product
         n_interactions = len(variable_names)
-        total_cols = n_interactions * n_haplo_positions
 
-        if memmap:
-            data_path = memmap_path_prefix + '.npy'
-            index_path = memmap_path_prefix + '_index.pickle'
-            columns_path = memmap_path_prefix + '_columns.pickle'
-
-            joblib.dump(haplotype_variables.index, index_path)
-            joblib.dump((haplotype_variables.columns, variable_names), columns_path)
-
-            # create a memory mapped results matrix to insert the results into
-            cross_prod_results = np.lib.format.open_memmap(
-                data_path,
-                dtype=np.float32,
-                mode='w+',
-                shape=(n_barcodes, total_cols)
+        if memmap_manager is not None:
+            cross_prod_results = memmap_manager.create_empty(
+                memmap_dataset_name,
+                index=haplotype_variables.index,
+                columns=haplotype_variables.columns,
+                items=variable_names,
+                dtype=dtype,
+                cls=cls
             )
         else:
-            # otherwise we create a large empty array to insert the results into
-            cross_prod_results = np.empty(
-                shape=(n_barcodes, total_cols),
-                dtype=np.float32
+            cross_prod_results = cls(
+                np.empty(shape=(n_barcodes, n_haplo_positions, n_iteractions), dtype=dtype),
+                index=haplotype_variables.index,
+                columns=haplotype_variables.columns,
+                items=variable_names,
+                dtype=dtype,
             )
+        cp_arr = cross_prod_results._data
 
-        col_offset = 0
-        for h in haplotype_variables.haplotypes:
+        for h, i in haplotype_variables._column_map.items():
             hap = haplotype_variables[h].reshape(-1, 1)
             if parental_genotypes is not None:
                 hap1_vars = np.einsum('ij,ik->ijk', hap, parental_genotypes.hap1._data)
                 hap2_vars = np.einsum('ij,ik->ijk', 1 - hap, parental_genotypes.hap2._data)
-                hap_vars = (hap1_vars + hap2_vars).reshape(n_barcodes, -1)
+                hap_vars = (hap1_vars + hap2_vars).reshape(n_barcodes, 1, n_iteractions)
             else:
                 hap_vars = hap
-            hap_vars = np.einsum('ij,ik->ijk', hap_vars, interaction_matrix).reshape(n_barcodes, -1)
-            cross_prod_results[:, col_offset:col_offset + n_interactions] = hap_vars
-            col_offset += n_interactions
+            hap_vars = np.einsum('ij,ik->ijk', hap_vars, interaction_matrix)
+            hap_vars = hap_vars.reshape(n_barcodes, 1, n_interactions)
+            cp_arr[:, i, ...] = hap_vars
 
-        if not memmap:
-            return cls(
-                cross_prod_results,
-                index=haplotype_variables.index,
-                haplotypes=haplotype_variables.columns,
-                variable_names=variable_names
-            )
-
-        # for memmapped arrays, we have some cleaning up to do
-        cross_prod_results.flush()
-        del cross_prod_results
-        # reload as read only
-        return cls.load_memmap(memmap_path_prefix)
-
-    @classmethod
-    def load_memmap(cls, path_prefix: str):
-        data = np.load(path_prefix + '.npy', mmap_mode='r')
-        index = joblib.load(path_prefix + '_index.pickle')
-        haplotypes, variable_names = joblib.load(path_prefix + '_columns.pickle')
-        return cls(data, index=index, haplotypes=haplotypes, variable_names=variable_names)
+        return cross_prod_results
