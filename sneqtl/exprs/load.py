@@ -14,8 +14,7 @@ from joblib import Parallel, delayed
 import click
 
 from snco.load.barcodes import read_cb_whitelist, umi_dedup_directional
-
-from sneqtl.io.mtx import write_matrix_market
+from sneqtl.variables.exprs import ExpressionVariables
 from sneqtl.io.gtf import parse_gtf
 
 
@@ -102,18 +101,20 @@ def parallel_scrna_gene_counter(bam_fn, gtf_fn, cb_whitelist_fn, quant_type='gen
         barcodes.intersection_update(cb_whitelist)
     barcodes = sorted(barcodes)
     log.info(f'Identified {len(barcodes)} barcodes with at least one UMI')
-    barcode_index = {b: i for i, b in enumerate(barcodes)}
+    final_cb_whitelist = set(barcodes)
 
-    features = sorted([g[0] for g in genes])
-    feature_index = {f: i for i, f in enumerate(features)}
+    gene_ids = sorted([g[0] for g in genes])
 
-    matrix = sparse.dok_matrix((len(features), len(barcodes)), dtype=np.int32)
+    gene_ids = sorted([g[0] for g in genes])
+
+    exprs_mat = ExpressionVariables.empty_sparse(
+        index=gene_ids,
+        columns=barcodes,
+        sparse_type='dok',
+        dtype=np.float32,
+    )
     for gene_id, cb_counts in gene_counts.items():
-        fi = feature_index[gene_id]
         for cb, count in cb_counts.items():
-            try:
-                bi = barcode_index[cb]
-            except KeyError:
-                continue
-            matrix[fi, bi] = count
-    return features, barcodes, matrix
+            if cb in final_cb_whitelist:
+                exprs_mat.loc[gene_id, cb] = count
+    return exprs_mat

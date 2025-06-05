@@ -22,6 +22,14 @@ class CellTypes(VariableManager):
     def as_covariates(self):
         return self.reindex(columns=list(self.columns[1:]))
 
+    @property
+    def celltype_counts(self):
+        counts = np.bincount(np.argmax(self._data, axis=1), minlength=self.shape[1])
+        celltypes = self.columns
+        return {
+            k: v for k, v in zip(celltypes, counts)
+        }
+
     @classmethod
     def from_principal_components(cls, principal_components,
                                   n_clusters=None, auto_max_clusters=10,

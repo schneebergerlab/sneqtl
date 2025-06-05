@@ -6,7 +6,7 @@ import tempfile
 
 import numpy as np
 
-from .variables.base import VariableManager 
+from sneqtl.variables.base import VariableManager 
 
 log = logging.getLogger('sneqtl')
 
@@ -44,7 +44,16 @@ class MemmapManager:
         columns_path = path_prefix + '_columns.pickle'
         items_path = path_prefix + '_items.pickle'
 
-        np.save(data_path, dataset._data)
+        if not getattr(dataset, 'is_sparse', False):
+            np.save(data_path, dataset._data)
+        else:
+            data = np.lib.format.open_memmap(
+                data_path, mode='w+', dtype=dataset._data.dtype, shape=dataset.shape,
+            )
+            for i in range(0, dataset.shape[0]):
+                data[i, :] = dataset._data[i, :].toarray()
+            data.flush()
+            del data
         joblib.dump(list(dataset.index), index_path)
         joblib.dump(list(dataset.columns), columns_path)
         if dataset._item_map:
@@ -99,7 +108,7 @@ class MemmapManager:
         else:
             data = np.empty(shape=shape, dtype=dtype)
         dataset = cls(data, index=index, columns=columns, items=items,
-                      name=dataset_name, dtype=dtype)
+                      name=dataset_name, dtype=dtype, frozen=False)
         dataset._memmap_prefix = path_prefix
         return dataset
 

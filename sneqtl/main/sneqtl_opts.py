@@ -241,16 +241,6 @@ sneqtl_opts.option(
 )
 
 
-sneqtl_opts.option(
-    '--max-pc-haplotype-var-explained',
-    subcommands=['doubletexprs', 'eqtl'],
-    required=False,
-    type=click.FloatRange(0.01, 1.0),
-    default=0.05,
-    help='the maximum variance that a haplotype '
-)
-
-
 def _parse_whitelist_covar_names(ctx, param, value):
     if value is not None:
         value = value.split(',')
@@ -299,33 +289,12 @@ sneqtl_opts.option(
 
 
 sneqtl_opts.option(
-    '--control-haplotypes',
+    '--covariate-haplotypes',
     subcommands=['eqtl'],
     required=False,
     default=None,
     help=('comma separated list of positions (in format Chr1:100000), the haplotypes of which '
           'should be controlled for as covariates in the model')
-)
-
-
-sneqtl_opts.option(
-    '--control-cis-haplotype/--no-control-cis',
-    subcommands=['eqtl'],
-    required=False,
-    default=False,
-    help=('whether to control for the cis-haplotype of genes when modelling them. '
-          'Requires GTF file of gene locations to be provided')
-)
-
-
-sneqtl_opts.option(
-    '--control-haplotypes-r2',
-    subcommands=['eqtl'],
-    required=False,
-    type=click.FloatRange(0.5, 1),
-    default=0.95,
-    help=('When controlling for specific haplotypes, do not test linked haplotypes with r2 of more '
-          'than this value')
 )
 
 

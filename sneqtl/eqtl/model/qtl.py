@@ -2,8 +2,8 @@ from functools import cached_property
 import numpy as np
 
 from .lm import fit_model, compare_lr_test, parameter_stats
-from ..variables.covariates import Covariates
-from ..variables.results import SingleGeneResults
+from sneqtl.variables.covariates import Covariates
+from sneqtl.variables.results import SingleGeneResults
 
 
 class SinglePhenoQTLAnalysis:
@@ -26,7 +26,7 @@ class SinglePhenoQTLAnalysis:
     def result_colnames(self):
         variable_names = self.haplotype_variables.variable_names
         return (
-            'lod_score', 'lrt_pval',
+            'lod_score', 'pval',
             *(f'{var_name}_lod_score' for var_name in variable_names),
             *(f'{var_name}_pval' for var_name in variable_names),
             *(f'{var_name}_coef' for var_name in variable_names),

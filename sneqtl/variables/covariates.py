@@ -1,6 +1,6 @@
 import numpy as np
 from .base import VariableManager
-from .utils import check_aligned
+from .var_utils import check_aligned
 
 
 class Covariates(VariableManager):

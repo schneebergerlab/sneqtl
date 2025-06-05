@@ -4,17 +4,18 @@ import tempfile
 import numpy as np
 import joblib
 import pandas as pd
+from scipy import stats
 
 from snco.main.logger import progress_bar
 from .model.qtl import SinglePhenoQTLAnalysis
 from .memmap import MemmapManager
 
-from .variables.base import VariableManager
-from .variables.exprs import ExpressionVariables
-from .variables.covariates import Covariates
-from .variables.interactions import HaplotypeInteractionVariables
-from .variables.results import eQTLResults, SingleGeneResults
-from .variables.utils import check_aligned
+from sneqtl.variables.base import VariableManager
+from sneqtl.variables.exprs import ExpressionVariables
+from sneqtl.variables.covariates import Covariates
+from sneqtl.variables.interactions import HaplotypeInteractionVariables
+from sneqtl.variables.results import eQTLResults, SingleGeneResults
+from sneqtl.variables.var_utils import check_aligned
 
 
 class eQTLAnalysisManager:
@@ -28,9 +29,8 @@ class eQTLAnalysisManager:
             covariates, *interacting_variables
         )
         self._mm = MemmapManager(memmap=True)
-        expression_variables.name = 'expression_variables'
+        expression_variables.rename('expression_variables')
         self.expression_variables = self._mm.convert(expression_variables)
-
         covariate_haplotypes, haplotypes = haplotypes.get_covariate_haplotypes(
             covariate_haplotypes, remove_correlated=True,
         )
@@ -43,6 +43,7 @@ class eQTLAnalysisManager:
         )
         self.covariates = self._mm.convert(covariates)
 
+        self.h_eff = haplotypes.h_eff
         self.haplotype_variables = HaplotypeInteractionVariables.from_cross_product(
             haplotype_variables=haplotypes,
             parental_genotypes=parental_genotypes,
@@ -94,7 +95,28 @@ class eQTLAnalysisManager:
         )
         return e.test_all_positions()
 
-    def run_all_genes(self, processes=1):
+    def apply_fwer_correction(self, results, inplace=True):
+        if not inplace:
+            results = results.copy()
+        pval_cols = [p for p in results.results_colnames if p.endswith('pval')]
+        results.loc[:, :, pval_cols] = np.clip(
+            results.loc[:, :, pval_cols] * self.h_eff,
+            a_max=1.0,
+            a_min=np.finfo(np.float64).tiny
+        )
+        return results
+
+    @staticmethod
+    def apply_fdr_correction(results, inplace=True):
+        if not inplace:
+            results = results.copy()
+        pval_cols = [p for p in results.results_colnames if p.endswith('pval')]
+        for h in results.haplotypes:
+            for pv in pval_cols:
+                results.loc[:, h, pv] = stats.false_discovery_control(results.loc[:, h, pv])
+        return results
+
+    def run_all_genes(self, processes=1, correct_fwer=True, correct_fdr=True):
 
         def _run_gene_parallel(gene_id):
             expression_variables = self._mm.load('expression_variables')
@@ -121,7 +143,7 @@ class eQTLAnalysisManager:
                 for gene_id in gene_progress
             )
 
-        self.results = self._mm.create_empty(
+        results = self._mm.create_empty(
             'results',
             index=self.gene_ids,
             columns=self.haplotypes,
@@ -129,10 +151,13 @@ class eQTLAnalysisManager:
             dtype=np.float64,
             cls=eQTLResults,
         )
-        results_arr = self.results._data
+        results_arr = results._data
         for i, gene_id in enumerate(self.gene_ids):
             self._mm.register(gene_id, SingleGeneResults)
             gene_results = self._mm.load(gene_id)
             results_arr[i, ...] = gene_results._data[:]
-
-        return self.results
+        if correct_fdr:
+            results = self.apply_fdr_correction(results)
+        if correct_fwer:
+            results = self.apply_fwer_correction(results)
+        return results

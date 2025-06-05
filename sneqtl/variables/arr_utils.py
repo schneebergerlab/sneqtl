@@ -1,4 +1,3 @@
-from operator import attrgetter
 import numpy as np
 
 
@@ -17,19 +16,6 @@ def get_dummies(arr, categories=None, drop_first=True, dtype=np.float32):
         categories = categories[1:]
     dummies = (arr[:, None] == categories).astype(dtype)
     return dummies, categories
-
-
-def check_aligned(*args, axis=0):
-    if len(args) < 2:
-        raise ValueError('At least two arrays should be provided')
-    axisgetter = attrgetter('index') if axis == 0 else attrgetter('columns')
-    reference_index = axisgetter(args[0])
-    for arr in args[1:]:
-        if arr is None:
-            continue
-        if axisgetter(arr) != reference_index:
-            raise ValueError('Not all variable indexes are aligned')
-    return reference_index
 
 
 def corrwith(arr1, arr2, axis=0):

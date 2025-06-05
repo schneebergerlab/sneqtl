@@ -1,6 +1,6 @@
 import numpy as np
 from .base import VariableManager
-from .utils import get_dummies
+from .arr_utils import get_dummies
 
 class ParentalGenotypesContainer:
 

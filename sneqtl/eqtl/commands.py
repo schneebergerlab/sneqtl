@@ -2,15 +2,17 @@ from logging import getLogger
 import numpy as np
 import pandas as pd
 
-from snco.records import PredictionRecords
 from snco.defaults import DEFAULT_RANDOM_SEED
 
-from . import utils
-from .eqtl import SNeQTLAnalysis
-from ..io.misc import read_cb_stats
-from ..io.gtf import read_gtf_gene_locs
-from ..io.mtx import read_expression_matrix
-from ..covars import get_principal_components, create_celltype_clusters
+from sneqtl.variables.base import VariableManager
+from sneqtl.variables.exprs import ExpressionVariables
+from sneqtl.variables.haplotypes import HaplotypeVariables
+from sneqtl.variables.genotypes import ParentalGenotypesContainer
+from sneqtl.variables.pca import PrincipalComponents
+from sneqtl.variables.celltypes import CellTypes
+from sneqtl.variables.var_utils import concat
+from sneqtl.io.misc import read_cb_stats
+from .analysis import eQTLAnalysisManager
 
 
 DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
@@ -20,11 +22,9 @@ log = getLogger('sneqtl')
 def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=None,
              min_cells_exprs=0.02,
              control_principal_components=True, min_pc_var_explained=0.01,
-             max_pc_haplotype_var_explained=0.05, covar_names=None,
-             model_parental_genotype=False,
+             covar_names=None, model_parental_genotype=False,
              celltype_haplotype_interaction=False, celltype_n_clusters=None,
-             control_haplotypes=None, control_cis_haplotype=False,
-             control_haplotypes_r2=0.95, cb_filter_exprs=None,
+             covariate_haplotypes=None, cb_filter_exprs=None,
              run_peakcall=True, lod_threshold=5, rel_lod_threshold=0.1,
              pval_threshold=1e-2, rel_prominence=0.25, ci_lod_drop=1.5,
              min_dist_between_eqtls=3e6, cis_eqtl_range=5e5,
@@ -37,35 +37,30 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
     else:
         cb_stats = None
         cb_whitelist = None
-    exprs_mat = read_expression_matrix(
-        exprs_mat_dir, cb_whitelist,
-        rel_min_cells_exprs=min_cells_exprs
-    )
-    log.info(f'Identified {len(exprs_mat)} genes to be tested')
+    expression_variables = ExpressionVariables.read_matrix_market(exprs_mat_dir)
+    if cb_whitelist is not None:
+        expression_variables = expression_variables.reindex(columns=cb_whitelist)
+    expression_variables = expression_variables.filter_genes().log_normalise()
+    log.info(f'Identified {len(expression_variables)} genes to be tested')
 
-    haplotypes = PredictionRecords.read_json(haplo_json_fn)
+    haplotypes = HaplotypeVariables.read_prediction_records(haplo_json_fn, cb_whitelist)
     log.info(f'Read haplotype information in {haplotypes.bin_size/1e3:.0f} kb bins')
-    log.info(f'There are {len(haplotypes.nbins)} chromosomes and '
-             f'{sum(haplotypes.nbins.values())} bins to be tested')
-    haplotypes = haplotypes.to_frame(dtype=np.float16).loc[cb_whitelist]
+    log.info(f'There are {len(haplotypes.chroms)} chromosomes and '
+             f'{len(haplotypes.columns)} bins to be tested')
 
-    principal_components = get_principal_components(
-        exprs_mat, haplotypes,
+    if expression_variables.barcodes != haplotypes.barcodes:
+        cb_whitelist = sorted(set(expression_variables.barcodes).intersection(haplotypes.barcodes))
+        expression_variables = expression_variables.reindex(columns=cb_whitelist)
+        haplotypes = haplotypes.reindex(index=cb_whitelist)
+    else:
+        cb_whitelist = list(expression_variables.barcodes)
+    principal_components = PrincipalComponents.from_expression(
+        expression_variables,
         min_var_explained=min_pc_var_explained,
-        max_pc_haplotype_var_explained=max_pc_haplotype_var_explained,
         rng=rng,
     )
-
-    if covar_names is not None and cb_stats is not None:
-        covariates = pd.concat([
-            principal_components,
-            utils.convert_to_numeric(cb_stats.loc[:, covar_names], drop_first=True)
-        ], axis=1)
-    else:
-        covariates = principal_components
-
     if celltype_haplotype_interaction:
-        celltype_clusters = create_celltype_clusters(
+        celltype_clusters = CellTypes.from_principal_components(
             principal_components,
             n_clusters=celltype_n_clusters,
             rng=rng
@@ -73,47 +68,47 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
     else:
         celltype_clusters = None
 
+    if covar_names is not None and cb_stats is not None:
+        covars = VariableManager.from_dataframe(cb_stats.loc[cb_whitelist, covar_names])
+        covariates = concat(
+            principal_components,
+            covars.as_numeric(drop_first=True),
+            axis=1
+        )
+    else:
+        covariates = principal_components
+
     if model_parental_genotype and cb_stats is not None:
-        parental_genotypes = cb_stats['geno_pred']
-        n_geno = len(parental_genotypes.unique())
+        parental_genotypes = cb_stats['geno_pred'].to_dict()
+        # TODO: fails for nans...
+        n_geno = len(set(parental_genotypes.values()))
         if n_geno == 1:
             log.warn('All parental (diploid) genotypes are the same. Genotype will not be modelled')
             parental_genotypes = None
         else:
             log.info(f'There are {n_geno} parental (diploid) genotypes to be tested')
+            parental_genotypes = ParentalGenotypesContainer.from_genotype_dict(parental_genotypes)
 
     else:
         log.info('No parental (diploid) genotypes provided. Genotypes are assumed to be the same for all nuclei')
         parental_genotypes = None
 
-    if control_cis_haplotype and gtf_fn is not None:
-        gene_locs = read_gtf_gene_locs(gtf_fn)
-        log.info(f'Read gene locations from GTF file {gtf_fn}')
-    else:
-        if control_cis_haplotype:
-            log.warn('No GTF file provided, cannot control for cis haplotypes!')
-        gene_locs = None
-
-    e = SNeQTLAnalysis(
-        exprs_mat, haplotypes, cb_whitelist,
-        covariates=covariates,
-        interacting_variables=celltype_clusters,
+    e = eQTLAnalysisManager(
+        expression_variables=expression_variables,
+        haplotypes=haplotypes,
         parental_genotypes=parental_genotypes,
-        control_haplotypes=control_haplotypes,
-        control_cis_haplotype=control_cis_haplotype,
-        gene_locs=gene_locs,
-        control_haplotypes_r2=control_haplotypes_r2,
+        interacting_variables=[celltype_clusters,],
+        covariates=covariates,
+        covariate_haplotypes=covariate_haplotypes
     )
-    example_gene_id = e.gene_ids[0]
-    example_covars = e.get_covariates(example_gene_id).columns.tolist()
-    example_covars = [c.replace(example_gene_id, 'gene_id') for c in example_covars]
-    haplo_test_vars = e.param_names
-    log.debug(f'Controlling for {len(example_covars)} covariates: {example_covars}')
-    log.debug(f'{len(haplo_test_vars)} haplotype-associated variables will be tested: {haplo_test_vars}')
-    log.debug(f'Estimated {e.effective_haplotypes} effective haplotypes - this number will be used '
-              'for haplotype-wise multiple testing correction')
+    covar_names = e.covariates.variable_names
+    haplo_var_names = e.haplotype_variables.variable_names
+    log.debug(f'Controlling for {len(covar_names)} covariates: {covar_names}')
+    log.debug(f'{len(haplo_var_names)} haplotype-associated variables will be tested: {haplo_var_names}')
+    log.debug(f'Estimated {e.h_eff} effective haplotypes - this number will be used '
+               'for haplotype-wise multiple testing correction')
 
-    eqtl_results = e.run_all_genes(processes=processes)
+    eqtl_results = e.run_all_genes(processes=processes).to_dataframe()
     
     log.info(f'eQTL analysis complete - writing full results to {output_prefix}.eqtls.tsv')
     eqtl_results.to_csv(
