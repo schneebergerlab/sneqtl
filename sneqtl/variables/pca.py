@@ -10,8 +10,10 @@ DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
 
 class PrincipalComponents(VariableManager):
 
-    def __post_init__(self):
+    def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
+        super().__init__(data, index, columns, items=None, name=None, dtype=None, frozen=True)
         self._pca = None
+        self.var_explained = None
 
     @property
     def barcodes(self):
@@ -64,4 +66,5 @@ class PrincipalComponents(VariableManager):
             dtype=principal_components.dtype
         )
         principal_components._pca = pca
+        principal_components.var_explained = sum(pca.explained_variance_ratio_[:stop_idx])
         return principal_components

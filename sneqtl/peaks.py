@@ -71,7 +71,7 @@ def call_eqtl_peaks(eqtl_results, gene_locs, peak_variable='overall', cis_range=
     pval_threshold = kwargs.get('pval_threshold', 1e-2)
     if peak_variable == 'overall':
         lod_var = 'lod_score'
-        pval_var = 'pval'
+        pval_var = 'lrt_pval'
     else:
         lod_var = f'{peak_variable}_lod_score'
         pval_var = f'{peak_variable}_pval'
@@ -101,7 +101,7 @@ def call_eqtl_peaks(eqtl_results, gene_locs, peak_variable='overall', cis_range=
     eqtl_peaks = eqtl_peaks[[
         'chrom_eqtl', 'pos_eqtl', 'left_ci_eqtl', 'right_ci_eqtl',
         'gene_id', 'chrom_gene', 'pos_gene', 'eqtl_type',
-        'lod_score', 'pval',
+        'lod_score', 'lrt_pval',
         *eqtl_results.columns.tolist()[5:]
     ]]
     return eqtl_peaks

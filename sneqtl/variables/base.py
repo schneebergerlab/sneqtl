@@ -1,5 +1,6 @@
 import os
 from copy import copy
+import itertools as it
 from logging import getLogger
 from functools import cached_property
 from contextlib import contextmanager
@@ -143,15 +144,15 @@ class VariableManager:
 
     @cached_property
     def index(self):
-        return tuple(self._index_map.keys())
+        return list(self._index_map.keys())
 
     @cached_property
     def columns(self):
-        return tuple(self._column_map.keys())
+        return list(self._column_map.keys())
 
     @cached_property
     def items(self):
-        return tuple(self._item_map.keys()) if self._item_map else None
+        return list(self._item_map.keys()) if self._item_map else None
 
     def __getitem__(self, key):
         if isinstance(key, list):
@@ -177,6 +178,10 @@ class VariableManager:
     @property
     def shape(self):
         return self._data.shape
+
+    @property
+    def ndim(self):
+        return self._data.ndim
 
     @property
     def size(self):
@@ -277,8 +282,59 @@ class VariableManager:
 
         return VariableManager(data, index=index, columns=columns)
 
-    def as_covariates(self):
-        return self
+    @property
+    def has_row_sum_constraint(self):
+        if self.ndim != 2:
+            raise ValueError('has_row_sum_constraint is only valid for 2D arrays')
+
+        tol = 1e-10
+        X = self._data
+        is_constant = np.all(X == X[0, :], axis=0)
+        X = X[:, ~is_constant]
+
+        n_cols = X.shape[1]
+        if not n_cols:
+            return True
+
+        # test row-sum constraint
+        row_sums = X.sum(axis=1)
+        return np.all(np.abs(row_sums - row_sums[0]) < tol)
+
+    @property
+    def is_singular(self):
+        if self.ndim != 2:
+            raise ValueError('is_singular is only valid for 2D arrays')
+
+        tol = 1e-10
+        X = self._data
+        is_constant = np.all(X == X[0, :], axis=0)
+        X = X[:, ~is_constant]
+
+        n_cols = X.shape[1]
+        if not n_cols:
+            return True
+
+        rank = np.linalg.matrix_rank(X, tol=tol)
+        return rank < n_cols
+
+    def find_dependent_variables(self):
+        if self.ndim != 2:
+            raise ValueError('singular_minor_index is only valid for 2D arrays')
+
+
+        tol = 1e-10
+        X = self._data
+        n_cols = X.shape[1]
+        if max_k is None:
+            max_k = n_cols
+
+        for k in range(2, max_k + 1):
+            for cols in it.combinations(range(n_cols), k):
+                sub = X[:, cols]
+                if np.linalg.matrix_rank(sub, tol=tol) < k:
+                    return [self.columns[i] for i in cols]
+        return None
+
 
     def drop_uninformative(self, tol=1e-8, axis=0):
         if self._data.ndim == 2:
@@ -304,6 +360,12 @@ class VariableManager:
         elif axis == 2:
             kwargs['items'] = axis_values
         return self.reindex(**kwargs)
+
+    def as_covariates(self):
+        covar = self.drop_uninformative()
+        if covar.has_row_sum_constraint:
+            covar = covar.reindex(columns=covar.columns[1:])
+        return covar
 
     def get_correlated(self, other, min_r2):
         r2 = arr_utils.corrwith(other._data, self._data, axis=0) ** 2

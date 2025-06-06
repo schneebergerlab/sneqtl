@@ -1,6 +1,5 @@
 from logging import getLogger
 import numpy as np
-import pandas as pd
 
 from snco.defaults import DEFAULT_RANDOM_SEED
 
@@ -40,7 +39,8 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
     expression_variables = ExpressionVariables.read_matrix_market(exprs_mat_dir)
     if cb_whitelist is not None:
         expression_variables = expression_variables.reindex(columns=cb_whitelist)
-    expression_variables = expression_variables.filter_genes().log_normalise()
+    expression_variables = (expression_variables.filter_genes(rel_min_cells_exprs=min_cells_exprs)
+                                                .log_normalise())
     log.info(f'Identified {len(expression_variables)} genes to be tested')
 
     haplotypes = HaplotypeVariables.read_prediction_records(haplo_json_fn, cb_whitelist)
@@ -59,24 +59,31 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
         min_var_explained=min_pc_var_explained,
         rng=rng,
     )
+    log.info(f'Identified {principal_components.shape[1]} principal components '
+             f'explaining {principal_components.var_explained * 100:.1f}% of variance')
     if celltype_haplotype_interaction:
         celltype_clusters = CellTypes.from_principal_components(
             principal_components,
             n_clusters=celltype_n_clusters,
             rng=rng
         )
+        log.info(f'Identified {celltype_clusters.shape[1]} cell type clusters')
+        log.debug(celltype_clusters.celltype_counts)
     else:
         celltype_clusters = None
 
-    if covar_names is not None and cb_stats is not None:
-        covars = VariableManager.from_dataframe(cb_stats.loc[cb_whitelist, covar_names])
-        covariates = concat(
-            principal_components,
-            covars.as_numeric(drop_first=True),
-            axis=1
-        )
-    else:
+    if control_principal_components:
         covariates = principal_components
+    else:
+        covariates = None
+
+    if covar_names is not None and cb_stats is not None:
+        extra_covars = (VariableManager.from_dataframe(cb_stats.loc[cb_whitelist, covar_names])
+                                       .as_numeric(drop_first=True))
+        if covariates is None:
+            covariates = extra_covars
+        else:
+            covariates = concat(principal_components, extra_covars, axis=1)
 
     if model_parental_genotype and cb_stats is not None:
         parental_genotypes = cb_stats['geno_pred'].to_dict()

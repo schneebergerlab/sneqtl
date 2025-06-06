@@ -15,24 +15,29 @@ class Covariates(VariableManager):
 
     @classmethod
     def from_variables(cls, *, interacting_variables=None, parental_genotypes=None,
-                       covariate_haplotypes=None, base_covariates=None, name=None):
+                       covariate_haplotypes=None, base_covariates=None,
+                       parental_genotypes_covar_type='diploid', name=None):
         columns = ['const',]
         sections = []
+
+        if interacting_variables is None:
+            interacting_variables = []
 
         index = check_aligned(
             *interacting_variables, parental_genotypes,
             covariate_haplotypes, base_covariates
         )
 
-        if interacting_variables is None:
-            interacting_variables = []
         for iv in interacting_variables:
             iv = iv.as_covariates()
             sections.append(iv._data)
             columns += iv.columns
 
         if parental_genotypes is not None:
-            pg = parental_genotypes.as_covariates()
+            if parental_genotypes_covar_type == 'diploid':
+                pg = parental_genotypes.diploid_covariates
+            else:
+                pg = parental_genotypes.haploid_covariates
             sections.append(pg._data)
             columns += pg.columns
 
@@ -52,10 +57,16 @@ class Covariates(VariableManager):
         intercept = np.ones((n_obs, 1), dtype=covariate_matrix.dtype)
         covariate_matrix = np.column_stack([intercept, covariate_matrix])
 
-        return cls(covariate_matrix, index=index, columns=columns, name=name)
+        covars = cls(covariate_matrix, index=index, columns=columns, name=name)
+        if covars.is_singular:
+            problem_covar = covars.find_dependent_variables()
+            raise ValueError(
+                f'Covariate matrix is singular - variables {problem_covar} are dependent (there may be others)'
+            )
+        return covars
 
     @classmethod
     def null_covariates(cls, variables, dtype=np.float32, name=None):
-        n_obs = y.shape[0]
+        n_obs = variables.shape[0]
         intercept = np.ones((n_obs, 1), dtype=dtype)
         return cls(intercept, index=variables.index, columns=['const',], name=name)

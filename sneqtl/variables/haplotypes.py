@@ -10,6 +10,7 @@ from .base import VariableManager
 class HaplotypeVariables(VariableManager):
 
     def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
+        data = np.clip(data, a_max=1, a_min=0)
         super().__init__(data, index, columns, items=None, name=None, dtype=None, frozen=True)
         self.bin_size = None
         self.chroms = set(chrom for chrom, pos in self.columns)

@@ -51,7 +51,7 @@ def concat(*args, axis=0, suffixes=None, name=None):
     axes_labels = {}
     for i, attr in enumerate(attrs):
         if i == axis:
-            values = chain.from_iterable(
+            values = it.chain.from_iterable(
                 _add_suffix(getattr(a, attr), s) for (a, s) in zip(args, suffixes)
             )
             axes_labels[attr] = tuple(values)

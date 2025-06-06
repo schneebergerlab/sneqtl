@@ -2,8 +2,13 @@ from functools import cached_property
 import numpy as np
 
 from .lm import fit_model, compare_lr_test, parameter_stats
+from .lm_torch import fit_models_torch, TORCH_AVAILABLE
 from sneqtl.variables.covariates import Covariates
 from sneqtl.variables.results import SingleGeneResults
+
+
+DEFAULT_RANDOM_SEED = 101
+DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
 
 
 class SinglePhenoQTLAnalysis:
@@ -26,7 +31,7 @@ class SinglePhenoQTLAnalysis:
     def result_colnames(self):
         variable_names = self.haplotype_variables.variable_names
         return (
-            'lod_score', 'pval',
+            'lod_score', 'lrt_pval',
             *(f'{var_name}_lod_score' for var_name in variable_names),
             *(f'{var_name}_pval' for var_name in variable_names),
             *(f'{var_name}_coef' for var_name in variable_names),
@@ -43,7 +48,72 @@ class SinglePhenoQTLAnalysis:
         haplo = self.haplotype_variables[(chrom, pos)]
         return self.run_test(haplo)
 
-    def test_all_positions(self):
+    def permutation_lod_thresholds(self, n_permutations=100, n_loci_per_permutation=100,
+                                   alpha=0.05, rng=DEFAULT_RNG):
+        if not TORCH_AVAILABLE or fit_models_torch is None:
+            raise RuntimeError("Permuation QTL testing is only available with pytorch")
+
+        n_loci = self.haplotype_variables._data.shape[1]
+        n_loci_per_permutation = min(n_loci_per_permutation, n_loci)
+        n_params = self.n_hap_vars
+
+        lrt_lods = []
+        max_param_lods = []
+
+        for i in range(n_permutations):
+            permuted_y = rng.permutation(self.y)
+
+            # Sample one random locus index
+            loci_idx = rng.choice(n_loci, size=n_loci_per_permutation, replace=False)
+
+            result = fit_models_torch(
+                permuted_y,
+                self.covariates._data,
+                self.haplotype_variables._data[:, loci_idx, :],
+                batch_size=n_loci_per_permutation,
+                mode='lod_only'
+            )
+
+            # First column: full model LOD
+            lrt_lods.extend(result[:, 0])
+
+            # Next n_params columns: per-parameter LOD scores
+            param_lods = result[0, 2:2 + n_params]
+            max_param_lods.extend(np.max(result[:, 1:1 + n_params], axis=1))
+
+        # Empirical thresholds at (1 - alpha) quantile
+        lrt_lod_thresh = np.percentile(lrt_lods, 100 * (1 - alpha))
+        param_lod_thresh = np.percentile(max_param_lods, 100 * (1 - alpha))
+
+        return lrt_lod_thresh, param_lod_thresh
+
+    def test_all_positions(self, use_torch=True, use_permutation_testing=True,
+                           n_permutations=100, n_loci_per_permutation=100,
+                           alpha=0.05, rng=DEFAULT_RNG):
+        if use_torch and TORCH_AVAILABLE and fit_models_torch is not None:
+
+            res = fit_models_torch(
+                self.y,
+                self.covariates._data,
+                self.haplotype_variables._data,
+                mode='full',
+            )
+            res = SingleGeneResults(
+                res,
+                index=self.haplotype_variables.haplotypes,
+                columns=self.result_colnames,
+                name=self.pheno_name,
+            )
+            
+            if use_permutation_testing:
+                lrt_lod_thresh, param_lod_thresh = self.permutation_lod_thresholds(
+                    n_permutations=n_permutations, n_loci_per_permutation=n_loci_per_permutation,
+                    alpha=alpha, rng=rng
+                )
+                res = res.apply_lod_thresholds(lrt_lod_thresh, param_lod_thresh)
+
+            return res
+
         res = []
         for (chrom, pos), haplo in self.haplotype_variables.iter_haplotypes():
             res.append(self.run_test(haplo))

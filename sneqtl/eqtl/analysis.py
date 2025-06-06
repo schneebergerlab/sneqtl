@@ -8,6 +8,7 @@ from scipy import stats
 
 from snco.main.logger import progress_bar
 from .model.qtl import SinglePhenoQTLAnalysis
+from .model.lm_torch import TORCH_AVAILABLE
 from .memmap import MemmapManager
 
 from sneqtl.variables.base import VariableManager
@@ -21,8 +22,9 @@ from sneqtl.variables.var_utils import check_aligned
 class eQTLAnalysisManager:
 
     def __init__(self, expression_variables, haplotypes,
-                 parental_genotypes=None, interacting_variables=None,
-                 covariates=None, covariate_haplotypes=None):
+                 parental_genotypes=None, parental_genotypes_covar_type='diploid',
+                 interacting_variables=None, covariates=None,
+                 covariate_haplotypes=None, use_permutation_testing=True):
 
         check_aligned(
             expression_variables.T, haplotypes, parental_genotypes,
@@ -39,6 +41,7 @@ class eQTLAnalysisManager:
             interacting_variables=interacting_variables,
             covariate_haplotypes=covariate_haplotypes,
             base_covariates=covariates,
+            parental_genotypes_covar_type='diploid',
             name='covariates'
         )
         self.covariates = self._mm.convert(covariates)
@@ -52,6 +55,7 @@ class eQTLAnalysisManager:
             memmap_manager=self._mm,
         )
         self.results = None
+        self.use_permutation_testing = use_permutation_testing if TORCH_AVAILABLE else False
 
     @property
     def gene_ids(self):
@@ -72,11 +76,19 @@ class eQTLAnalysisManager:
     @property
     def results_colnames(self):
         variable_names = self.haplotype_variables.variable_names
-        return ('lod_score', 'lrt_pval',
-            *(f'{var_name}_lod_score' for var_name in variable_names),
-            *(f'{var_name}_pval' for var_name in variable_names),
-            *(f'{var_name}_coef' for var_name in variable_names),
-        )
+        if self.use_permutation_testing:
+            return ('lod_score', 'lrt_pval',
+                *(f'{var_name}_lod_score' for var_name in variable_names),
+                *(f'{var_name}_sig' for var_name in variable_names),
+                *(f'{var_name}_pval' for var_name in variable_names),
+                *(f'{var_name}_coef' for var_name in variable_names),
+            )
+        else:
+            return ('lod_score', 'lrt_pval',
+                *(f'{var_name}_lod_score' for var_name in variable_names),
+                *(f'{var_name}_pval' for var_name in variable_names),
+                *(f'{var_name}_coef' for var_name in variable_names),
+            )
 
     def close(self):
         self._mm.remove_all()
@@ -154,7 +166,7 @@ class eQTLAnalysisManager:
         results_arr = results._data
         for i, gene_id in enumerate(self.gene_ids):
             self._mm.register(gene_id, SingleGeneResults)
-            gene_results = self._mm.load(gene_id)
+            gene_results = self._mm.load(gene_id, mode=None) # not memmapped
             results_arr[i, ...] = gene_results._data[:]
         if correct_fdr:
             results = self.apply_fdr_correction(results)

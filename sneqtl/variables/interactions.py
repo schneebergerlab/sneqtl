@@ -35,7 +35,7 @@ class HaplotypeInteractionVariables(VariableManager):
         if parental_genotypes is not None: 
             if not isinstance(parental_genotypes, ParentalGenotypesContainer):
                 raise ValueError('parental_genotypes should be of type ParentalGenotypesContainer')
-            if haplotype_variables.index != parental_genotypes.genotypes.index:
+            if haplotype_variables.index != parental_genotypes.index:
                 raise ValueError('Index mismatch between haplotypes and parental genotypes')
 
         if interacting_variables is None:
@@ -49,9 +49,16 @@ class HaplotypeInteractionVariables(VariableManager):
                 raise ValueError('Index mismatch between haplotypes and interacting variables')
 
         if parental_genotypes is not None:
-            variable_names = [f'haplo_{geno}' for geno in parental_genotypes.genotype_names]
+            hv = parental_genotypes.get_haplotype_variables(haplotype_variables.iloc[:, 0])
+            if hv.is_singular:
+                raise ValueError(
+                    'The haplotype variable matrix is singular, consider altering experimental design'
+                )
+            variable_names = hv.columns
+            n_genotypes = len(variable_names)
         else:
             variable_names = ['haplo']
+            n_genotypes = None
 
         # precompute the interaction matrix from all the variables
         # except parental genotype (which is a bit more complex)
@@ -85,13 +92,11 @@ class HaplotypeInteractionVariables(VariableManager):
         cp_arr = cross_prod_results._data
 
         for h, i in haplotype_variables._column_map.items():
-            hap = haplotype_variables[h].reshape(-1, 1)
+            hap = haplotype_variables[h]
             if parental_genotypes is not None:
-                hap1_vars = np.einsum('ij,ik->ijk', hap, parental_genotypes.hap1._data)
-                hap2_vars = np.einsum('ij,ik->ijk', 1 - hap, parental_genotypes.hap2._data)
-                hap_vars = (hap1_vars + hap2_vars).reshape(n_barcodes, n_iteractions)
+                hap_vars = parental_genotypes.get_haplotype_variables(hap)._data
             else:
-                hap_vars = hap
+                hap_vars = hap.reshape(-1, 1)
             hap_vars = np.einsum('ij,ik->ijk', hap_vars, interaction_matrix)
             hap_vars = hap_vars.reshape(n_barcodes, n_interactions)
             cp_arr[:, i, ...] = hap_vars
