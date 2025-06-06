@@ -31,13 +31,12 @@ def permuted_residuals(y, X, *, rng, n_permutations=50):
     X_t = torch.tensor(X, dtype=dtype, device=device)
 
     beta, sse, resid = _linear_model(X_t, y_t)
-    fitted = X_t @ beta
-    resid = (y_t - fitted).cpu().numpy()
+    resid = resid.cpu().numpy()
+    fitted = (X_t @ beta).cpu().numpy()
 
     for _ in range(n_permutations):
         permuted = rng.permutation(resid)
-        y_perm = fitted.cpu().numpy() + permuted
-        yield y_perm
+        yield fitted + permuted
 
 
 def fit_models_torch(y, covariates, haplo_variables, batch_size=500, mode='full'):
