@@ -2,7 +2,7 @@ from functools import cached_property
 import numpy as np
 
 from .lm import fit_model, compare_lr_test, parameter_stats
-from .lm_torch import fit_models_torch, TORCH_AVAILABLE
+from .lm_torch import fit_models_torch, permuted_residuals, TORCH_AVAILABLE
 from sneqtl.variables.covariates import Covariates
 from sneqtl.variables.results import SingleGeneResults
 
@@ -48,26 +48,32 @@ class SinglePhenoQTLAnalysis:
         haplo = self.haplotype_variables[(chrom, pos)]
         return self.run_test(haplo)
 
-    def permutation_lod_thresholds(self, n_permutations=100, n_loci_per_permutation=100,
-                                   alpha=0.05, rng=DEFAULT_RNG):
+    def permutation_lod_thresholds(self, n_permutations=50, n_loci_per_permutation=200,
+                                   alpha=0.01, rng=DEFAULT_RNG):
         if not TORCH_AVAILABLE or fit_models_torch is None:
             raise RuntimeError("Permuation QTL testing is only available with pytorch")
 
         n_loci = self.haplotype_variables._data.shape[1]
         n_loci_per_permutation = min(n_loci_per_permutation, n_loci)
         n_params = self.n_hap_vars
+        
 
         lrt_lods = []
         max_param_lods = []
 
-        for i in range(n_permutations):
-            permuted_y = rng.permutation(self.y)
+        # 
+        y_permutation_iter = permuted_residuals(
+            self.y, self.covariates._data,
+            rng=rng,
+            n_permutations=n_permutations
+        )
 
-            # Sample one random locus index
+        for y_perm in y_permutation_iter:
+
             loci_idx = rng.choice(n_loci, size=n_loci_per_permutation, replace=False)
 
             result = fit_models_torch(
-                permuted_y,
+                y_perm,
                 self.covariates._data,
                 self.haplotype_variables._data[:, loci_idx, :],
                 batch_size=n_loci_per_permutation,
@@ -88,8 +94,8 @@ class SinglePhenoQTLAnalysis:
         return lrt_lod_thresh, param_lod_thresh
 
     def test_all_positions(self, use_torch=True, use_permutation_testing=True,
-                           n_permutations=100, n_loci_per_permutation=100,
-                           alpha=0.05, rng=DEFAULT_RNG):
+                           n_permutations=50, n_loci_per_permutation=200,
+                           alpha=0.01, rng=DEFAULT_RNG):
         if use_torch and TORCH_AVAILABLE and fit_models_torch is not None:
 
             res = fit_models_torch(

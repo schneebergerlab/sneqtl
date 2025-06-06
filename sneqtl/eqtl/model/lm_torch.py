@@ -20,12 +20,29 @@ def _linear_model(X, y):
     beta = torch.cholesky_solve(Xty.unsqueeze(1), L).squeeze(1)
     resid = y - X @ beta
     sse = torch.sum(resid ** 2)
-    return beta, sse
+    return beta, sse, resid
+
+
+def permuted_residuals(y, X, *, rng, n_permutations=50):
+    dtype = torch.float64
+    device = 'cpu'
+
+    y_t = torch.tensor(y, dtype=dtype, device=device)
+    X_t = torch.tensor(X, dtype=dtype, device=device)
+
+    beta, sse, resid = _linear_model(X_t, y_t)
+    fitted = X_t @ beta
+    resid = (y_t - fitted).cpu().numpy()
+
+    for _ in range(n_permutations):
+        permuted = rng.permutation(resid)
+        y_perm = fitted.cpu().numpy() + permuted
+        yield y_perm
 
 
 def fit_models_torch(y, covariates, haplo_variables, batch_size=500, mode='full'):
 
-    if not TORCH_AVAILABLE:  # pragma: no cover - defensive
+    if not TORCH_AVAILABLE:
         raise ImportError("PyTorch is not available")
 
     dtype = torch.float64
@@ -39,7 +56,7 @@ def fit_models_torch(y, covariates, haplo_variables, batch_size=500, mode='full'
     n_cov = cov_t.shape[1]
 
     # Nested model with covariates only
-    _, sse_nest = _linear_model(cov_t, y_t)
+    _, sse_nest, _ = _linear_model(cov_t, y_t)
     ll_nest = -0.5 * n * (np.log(2 * np.pi) + torch.log(sse_nest / n) + 1)
 
     # Pre-compute quantities shared across all haplotypes
