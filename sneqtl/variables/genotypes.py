@@ -22,16 +22,15 @@ class ParentalGenotypesContainer:
         return self._hap1.columns
 
     @cached_property
+    def _hap1_hap2_combinations(self):
+        iu_i, iu_j = np.triu_indices(self._hap1.shape[1], k=1)
+        il_i, il_j = np.tril_indices(self._hap1.shape[1], k=-1)
+        prod = self._hap1._data[:, :, None] * self._hap2._data[:, None, :]
+        return prod[:, iu_i, iu_j] + prod[:, il_i, il_j]
+
+    @cached_property
     def diploid_covariates(self):
-
-        def _unique_offdiag_outer_flat(arr1, arr2):
-            n, d = arr1.shape
-            iu_i, iu_j = np.triu_indices(d, k=1)
-            il_i, il_j = np.tril_indices(d, k=-1)
-            op = arr1[:, :, None] * arr2[:, None, :]
-            return op[:, iu_i, iu_j] + op[:, il_i, il_j]
-
-        diploid_geno_data = _unique_offdiag_outer_flat(self._hap1._data, self._hap2._data)
+        diploid_geno_data = self._hap1_hap2_combinations
         diploid_columns = [f'{hap1}:{hap2}' for hap1, hap2 in it.combinations(self._hap1.columns, 2)]
         diploid_genotypes = VariableManager(
             data=diploid_geno_data,
@@ -53,16 +52,28 @@ class ParentalGenotypesContainer:
             haploid_genotypes = haploid_genotypes.reindex(columns=haploid_genotypes.columns[1:])
         return haploid_genotypes
 
-    def get_haplotype_variables(self, haplotype):
+    def get_haplotype_variables(self, haplotype, variable_type='main'):
         haplotype = haplotype.reshape(-1, 1)
-        phap1, phap2 = self._hap1._data, self._hap2._data
-        hap1_vars = np.einsum('ij,ik->ijk', haplotype, phap1)
-        hap2_vars = np.einsum('ij,ik->ijk', 1 - haplotype, phap2)
-        hap_var_data = (hap1_vars + hap2_vars).reshape(phap1.shape)
+        if variable_type == 'main':
+            hap1_vars = self._hap1._data * (1 - haplotype)
+            hap2_vars = self._hap2._data * haplotype
+            hap_var_data = hap1_vars + hap2_vars
+            columns=[f'haplo_{geno}' for geno in self._hap1.columns]
+        elif variable_type == 'alt':
+            hap_combinations = self._hap1_hap2_combinations
+            hap_var_data = np.concat([
+                hap_combinations * (1 - haplotype),
+                hap_combinations * haplotype,
+            ], axis=1)
+            hap_combinations = list(it.combinations(self._hap1.columns, 2))
+            columns_h1 = [f'haplo_{hap1}_bg_{hap2}' for hap1, hap2 in hap_combinations]
+            columns_h2 = [f'haplo_{hap2}_bg_{hap1}' for hap1, hap2 in hap_combinations]
+            columns = columns_h1 + columns_h2
+
         hap_vars = VariableManager(
             hap_var_data,
             index=self._hap1.index,
-            columns=[f'haplo_{geno}' for geno in self._hap1.columns]
+            columns=columns
         )
         if hap_vars.has_row_sum_constraint:
             hap_vars = hap_vars.reindex(columns=hap_vars.columns[1:])

@@ -46,7 +46,6 @@ class eQTLAnalysisManager:
         )
         self.covariates = self._mm.convert(covariates)
 
-        self.h_eff = haplotypes.h_eff
         self.haplotype_variables = HaplotypeInteractionVariables.from_cross_product(
             haplotype_variables=haplotypes,
             parental_genotypes=parental_genotypes,
@@ -76,19 +75,11 @@ class eQTLAnalysisManager:
     @property
     def results_colnames(self):
         variable_names = self.haplotype_variables.variable_names
-        if self.use_permutation_testing:
-            return ('lod_score', 'lrt_pval',
-                *(f'{var_name}_lod_score' for var_name in variable_names),
-                *(f'{var_name}_sig' for var_name in variable_names),
-                *(f'{var_name}_pval' for var_name in variable_names),
-                *(f'{var_name}_coef' for var_name in variable_names),
-            )
-        else:
-            return ('lod_score', 'lrt_pval',
-                *(f'{var_name}_lod_score' for var_name in variable_names),
-                *(f'{var_name}_pval' for var_name in variable_names),
-                *(f'{var_name}_coef' for var_name in variable_names),
-            )
+        return ('lod_score', 'lrt_pval',
+            *(f'{var_name}_lod_score' for var_name in variable_names),
+            *(f'{var_name}_pval' for var_name in variable_names),
+            *(f'{var_name}_coef' for var_name in variable_names),
+        )
 
     def close(self):
         self._mm.remove_all()
@@ -107,17 +98,6 @@ class eQTLAnalysisManager:
         )
         return e.test_all_positions()
 
-    def apply_fwer_correction(self, results, inplace=True):
-        if not inplace:
-            results = results.copy()
-        pval_cols = [p for p in results.results_colnames if p.endswith('pval')]
-        results.loc[:, :, pval_cols] = np.clip(
-            results.loc[:, :, pval_cols] * self.h_eff,
-            a_max=1.0,
-            a_min=np.finfo(np.float64).tiny
-        )
-        return results
-
     @staticmethod
     def apply_fdr_correction(results, inplace=True):
         if not inplace:
@@ -128,7 +108,7 @@ class eQTLAnalysisManager:
                 results.loc[:, h, pv] = stats.false_discovery_control(results.loc[:, h, pv])
         return results
 
-    def run_all_genes(self, processes=1, correct_fwer=True, correct_fdr=True):
+    def run_all_genes(self, processes=1, correct_fdr=True):
 
         def _run_gene_parallel(gene_id):
             expression_variables = self._mm.load('expression_variables')

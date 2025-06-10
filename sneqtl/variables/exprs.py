@@ -53,7 +53,7 @@ class ExpressionVariables(VariableManager, SparseMixIn):
     def log_normalise(self, alpha=0.25):
         barcode_counts = self._data.sum(axis=0)
         sf = barcode_counts / barcode_counts.mean()
-        ln_data = np.log2(self._data / sf + (1.0 / 4 * alpha))
+        ln_data = np.log2(self._data / sf + (1.0 / (4 * alpha)))
         ln_data[~np.isfinite(ln_data)] = 0
         return ExpressionVariables(
             data=ln_data,
