@@ -1,12 +1,7 @@
 import numpy as np
 from scipy import stats
+import torch
 
-try:
-    import torch
-    TORCH_AVAILABLE = True
-except Exception:  # ImportError or others
-    TORCH_AVAILABLE = False
-    torch = None
 
 LOD = 2 * np.log(10)
 DEFAULT_RNG = np.random.default_rng(101)
@@ -161,14 +156,12 @@ def _as_tensors(*args, dtype=torch.float64, device='cpu'):
     tensors : torch.Tensor or tuple of torch.Tensor
         Converted tensor(s). Returns a single tensor if one argument is given.
     """
-    if not TORCH_AVAILABLE:
-        raise ImportError("PyTorch is not available")
     if len(args) == 1:
         return torch.tensor(args[0], dtype=dtype, device=device)
     return (torch.tensor(arr, dtype=dtype, device=device) for arr in args)
 
 
-def _fit_batch(*, y, covar, hap, ctc, cty, yty, df_resid):
+def _fit_batch(*, y, covariates, hap, ctc, cty, yty, df_resid):
     """
     Fit linear models in batch over haplotype slices.
 
@@ -176,7 +169,7 @@ def _fit_batch(*, y, covar, hap, ctc, cty, yty, df_resid):
     ----------
     y : torch.Tensor, shape (n,)
         Response vector.
-    covar : torch.Tensor, shape (n, n_cov)
+    covariates : torch.Tensor, shape (n, n_cov)
         Covariate matrix.
     hap : torch.Tensor, shape (n, batch_size, n_hvars)
         Haplotype variables in batch.
@@ -199,12 +192,12 @@ def _fit_batch(*, y, covar, hap, ctc, cty, yty, df_resid):
         Parameter-level LOD scores.
     """
     n, bsz, n_hvars = hap.shape
-    n_cov = covar.shape[1]
+    n_cov = covariates.shape[1]
 
     hb = hap.permute(1, 2, 0)  # (b, n_hvars, n)
 
     hth = torch.bmm(hb, hap.permute(1, 0, 2))  # (b, n_hvars, n_hvars)
-    htc = hb @ covar                         # (b, n_hvars, n_cov)
+    htc = hb @ covariates                      # (b, n_hvars, n_cov)
     hty = hb @ y                           # (b, n_hvars)
 
     # Assemble XtX blocks
@@ -228,11 +221,13 @@ def _fit_batch(*, y, covar, hap, ctc, cty, yty, df_resid):
     diag = torch.diagonal(XtX_inv, dim1=1, dim2=2)  # (b, p)
     se = torch.sqrt(diag * (sse / df_resid).unsqueeze(1))  # (b, p)
 
-    t_stats = beta / se  # (b, p)
-    param_chi2 = t_stats[:, :n_hvars] ** 2
+    t_stats = beta / se
+    param_chi2 = t_stats[:, :n_hvars] ** 2   # (b, n_hvars)
     param_lods = param_chi2 / LOD
 
-    return beta, sse, param_lods
+    coefs = beta[:, :n_hvars]
+
+    return coefs, sse, param_lods
 
 
 def _process_batch(hap_idx, haplo_variables, haplo_variables_alt, *,
@@ -256,7 +251,7 @@ def _process_batch(hap_idx, haplo_variables, haplo_variables_alt, *,
         Degrees of freedom for residuals of haplo_variables_alt.
     y : torch.Tensor, shape (n,)
         Response vector.
-    covar : torch.Tensor, shape (n, n_cov)
+    covariates : torch.Tensor, shape (n, n_cov)
         Covariate matrix.
     ctc : torch.Tensor, shape (n_cov, n_cov)
         Precomputed covar^T covar.
@@ -267,13 +262,13 @@ def _process_batch(hap_idx, haplo_variables, haplo_variables_alt, *,
 
     Returns
     -------
-    beta : torch.Tensor, shape (n_tested_haps, n_hvars)
+    coefs : torch.Tensor, shape (n_tested_haps, n_hvars)
         Estimated coefficients for the main model.
     lod_scores : torch.Tensor, shape (n_tested_haps,)
         LOD scores of the main model vs nested model.
     param_lods : torch.Tensor, shape (n_tested_haps, n_hvars)
         Per-parameter LOD scores for the main model.
-    beta_alt : torch.Tensor or None, shape (n_tested_haps, n_hvars_alt)
+    coefs_alt : torch.Tensor or None, shape (n_tested_haps, n_hvars_alt)
         Estimated coefficients for the alternative model, if provided.
     lod_scores_alt : torch.Tensor or None, shape (n_tested_haps,)
         LOD scores for the alternative model vs main model.
@@ -282,7 +277,7 @@ def _process_batch(hap_idx, haplo_variables, haplo_variables_alt, *,
     """
     n = haplo_variables.shape[0]
     hap = _as_tensors(haplo_variables[:, hap_idx, :])
-    beta, sse, param_lods = _fit_batch(
+    coefs, sse, param_lods = _fit_batch(
         hap=hap, df_resid=df_resid, **fit_kwargs
     )
     ll_main = _ll(sse, n)
@@ -290,18 +285,18 @@ def _process_batch(hap_idx, haplo_variables, haplo_variables_alt, *,
 
     if haplo_variables_alt is not None:
         hap_alt = _as_tensors(haplo_variables_alt[:, hap_idx, :])
-        beta_alt, sse_alt, param_lods_alt = _fit_batch(
+        coefs_alt, sse_alt, param_lods_alt = _fit_batch(
             hap=hap_alt, df_resid=df_resid_alt, **fit_kwargs
         )
         lod_scores_alt = _lrt(ll_main, _ll(sse_alt, n))
     else:
-        beta_alt = None
+        coefs_alt = None
         lod_scores_alt = None
         param_lods_alt = None
-    return beta, lod_scores, param_lods, beta_alt, lod_scores_alt, param_lods_alt
+    return lod_scores, param_lods, coefs, lod_scores_alt, param_lods_alt, coefs_alt
 
 
-def _permute_residuals(X, beta, resid, *, rng, n_perms=50):
+def _permute_residuals(X, beta, resid, *, rng, n_perm=50):
     """
     Generate permuted residual phenotypes using Freedman-Lane strategy.
 
@@ -315,7 +310,7 @@ def _permute_residuals(X, beta, resid, *, rng, n_perms=50):
         Residuals from the linear model fit of `y` ~ `X`.
     rng : np.random.Generator
         Random number generator instance.
-    n_perms : int
+    n_perm : int
         Number of permutations.
 
     Yields
@@ -327,14 +322,13 @@ def _permute_residuals(X, beta, resid, *, rng, n_perms=50):
     t_rng.manual_seed(int(rng.integers(0, 2**31 - 1)))
     n = resid.shape[0]
     fitted = X @ beta
-    for _ in range(n_perms):
-        permuted = resid[t_rng.randperm(n)]
+    for _ in range(n_perm):
+        permuted = resid[torch.randperm(n, generator=t_rng)]
         yield fitted + permuted
 
 
-@torch.no_grad()
-def _calculate_null_lod_dists(y, covariates, haplo_variables, haplo_variables_alt=None,
-                              n_perm=50, n_haps_per_perm=200, alpha=0.01, rng=DEFAULT_RNG):
+def _estimate_null_lod_distributions(y, covariates, haplo_variables, haplo_variables_alt=None,
+                                     n_perm=50, n_haps_per_perm=200, rng=DEFAULT_RNG):
     """
     Estimate empirical LOD score thresholds via residual permutation.
 
@@ -348,12 +342,10 @@ def _calculate_null_lod_dists(y, covariates, haplo_variables, haplo_variables_al
         Haplotype encodings to test.
     haplo_variables_alt : array-like, shape (n, n_hap, n_hvars_alt), optional
         Alternative haplotype encoding (for nested model comparison).
-    n_perms : int
+    n_perm : int
         Number of phenotype permutations.
     n_haps_per_perm : int
         Number of loci to sample per permutation.
-    alpha : float
-        Significance threshold.
     rng : np.random.Generator or None
         RNG instance (optional).
 
@@ -385,15 +377,15 @@ def _calculate_null_lod_dists(y, covariates, haplo_variables, haplo_variables_al
         lod_score_alt_dist = None
         param_lod_alt_dist = None
 
-    for y_perm in _permute_residuals(covariates, beta_nest, resid_nest, rng=rng, n_perms=n_perms):
+    for y_perm in _permute_residuals(covariates, beta_nest, resid_nest, rng=rng, n_perm=n_perm):
         _, sse_nest, _, ctc, ctyp, yptyp = _fit_lm(covariates, y_perm, return_projections=True)
         ll_nest = _ll(sse_nest, n)
 
         hap_idx = rng.choice(n_hap, size=n_haps_per_perm, replace=False)
-        (_, lod_scores, param_lods,
-         _, lod_scores_alt, param_lods_alt) = _process_batch(
+        (lod_scores, param_lods, _,
+         lod_scores_alt, param_lods_alt, _) = _process_batch(
             hap_idx, haplo_variables, haplo_variables_alt,
-            y=y, covariates=covariates, ll_nest=ll_nest,
+            y=y_perm, covariates=covariates, ll_nest=ll_nest,
             ctc=ctc, cty=ctyp, yty=yptyp,
             df_resid=df_resid, df_resid_alt=df_resid_alt
         )
@@ -407,8 +399,8 @@ def _calculate_null_lod_dists(y, covariates, haplo_variables, haplo_variables_al
     lod_score_dist = torch.sort(torch.cat(lod_score_dist)).values
     param_lod_dist = torch.sort(torch.cat(param_lod_dist)).values
     if haplo_variables_alt is not None:
-        lod_score_alt_dist = torch.sort(torch.cat(lod_score_dist)).values
-        param_lod_alt_dist = torch.sort(torch.cat(param_lod_dist)).values
+        lod_score_alt_dist = torch.sort(torch.cat(lod_score_alt_dist)).values
+        param_lod_alt_dist = torch.sort(torch.cat(param_lod_alt_dist)).values
     return lod_score_dist, param_lod_dist, lod_score_alt_dist, param_lod_alt_dist
 
 
@@ -421,7 +413,7 @@ def _empirical_p_value(obs_lod, null_lod):
 
 
 def fit_models(y, covariates, haplo_variables, haplo_variables_alt=None, batch_size=500,
-               n_perm=50, n_haps_per_perm=200, alpha=0.01, rng=DEFAULT_RNG):
+               n_perm=50, n_haps_per_perm=200, rng=DEFAULT_RNG):
     """
     Fit linear models for QTL analysis using PyTorch.
 
@@ -437,12 +429,10 @@ def fit_models(y, covariates, haplo_variables, haplo_variables_alt=None, batch_s
         Alternative haplotype encoding (for nested model comparison).
     batch_size : int, optional
         Number of haplotypes to process in each batch.
-    n_perms : int
+    n_perm : int
         Number of phenotype permutations.
     n_haps_per_perm : int
         Number of loci to sample per permutation.
-    alpha : float
-        Significance threshold.
     rng : np.random.Generator or None
         RNG instance (optional).
 
@@ -464,9 +454,9 @@ def fit_models(y, covariates, haplo_variables, haplo_variables_alt=None, batch_s
 
     # start by calculating the permutation-test based thresholds for main and alt models
     (lod_score_null_dist, param_lod_null_dist,
-     lod_score_alt_null_dist, param_lod_alt_null_dist) = _calculate_permutation_thresholds(
+     lod_score_alt_null_dist, param_lod_alt_null_dist) = _estimate_null_lod_distributions(
         y, covariates, haplo_variables, haplo_variables_alt=haplo_variables_alt,
-        n_perm=n_perm, n_haps_per_perm=n_haps_per_perm, alpha=alpha, rng=rng
+        n_perm=n_perm, n_haps_per_perm=n_haps_per_perm, rng=rng
     )
 
     # Nested model with covariates only
@@ -479,34 +469,34 @@ def fit_models(y, covariates, haplo_variables, haplo_variables_alt=None, batch_s
         end = min(start + batch_size, n_hap)
 
         hap_idx = slice(start, end)
-        (beta, lod_scores, param_lods,
-         beta_alt, lod_scores_alt, param_lods_alt) = _process_batch(
+        (lod_scores, param_lods, coefs,
+         lod_scores_alt, param_lods_alt, coefs_alt) = _process_batch(
             hap_idx, haplo_variables, haplo_variables_alt,
             y=y, covariates=covariates, ll_nest=ll_nest,
             ctc=ctc, cty=cty, yty=yty,
             df_resid=df_resid, df_resid_alt=df_resid_alt
         )
         lrt_pval = _empirical_p_value(lod_scores, lod_score_null_dist)
-        param_pval = _empirical_p_value(param_lods, param_lod_null_dist)
+        param_pvals = _empirical_p_value(param_lods, param_lod_null_dist)
 
         batch_res = torch.cat([
             lod_scores[:, None],
             lrt_pval[:, None],
             param_lods,
             param_pvals,
-            beta,
+            coefs,
         ], dim=1)
 
         if haplo_variables_alt is not None:
             lrt_pval_alt = _empirical_p_value(lod_scores_alt, lod_score_alt_null_dist)
-            param_pval_alt = _empirical_p_value(param_lods_alt, param_lod_alt_null_dist)
+            param_pvals_alt = _empirical_p_value(param_lods_alt, param_lod_alt_null_dist)
             batch_res = torch.cat([
                 batch_res,
                 lod_scores_alt[:, None],
                 lrt_pval_alt[:, None],
                 param_lods_alt,
-                param_pval_alt,
-                beta_alt
+                param_pvals_alt,
+                coefs_alt
             ], dim=1)
 
         results.append(batch_res)

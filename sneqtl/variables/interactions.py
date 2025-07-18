@@ -10,15 +10,15 @@ class HaplotypeInteractionVariables(VariableManager):
 
     @property
     def barcodes(self):
-        return tuple(self._index_map.keys())
+        return self.index
 
     @property
     def haplotypes(self):
-        return tuple(self._column_map.keys())
+        return self.columns
 
     @property
     def variable_names(self):
-        return tuple(self._item_map.keys())
+        return self.items
 
     def iter_haplotypes(self):
         for hap, i in self._column_map.items():
@@ -49,7 +49,9 @@ class HaplotypeInteractionVariables(VariableManager):
                 raise ValueError('Index mismatch between haplotypes and interacting variables')
 
         if parental_genotypes is not None:
-            hv = parental_genotypes.get_haplotype_variables(haplotype_variables.iloc[:, 0])
+            hv = parental_genotypes.get_haplotype_variables(
+                haplotype_variables.iloc[:, 0],
+            )._data
             if hv.is_singular:
                 raise ValueError(
                     'The haplotype variable matrix is singular, consider altering experimental design'
@@ -57,6 +59,7 @@ class HaplotypeInteractionVariables(VariableManager):
             variable_names = hv.columns
             n_genotypes = len(variable_names)
         else:
+            hv = haplotype_variables.iloc[:, 0].reshape(-1, 1)
             variable_names = ['haplo']
             n_genotypes = None
 
@@ -65,9 +68,15 @@ class HaplotypeInteractionVariables(VariableManager):
         n_barcodes, n_haplo_positions = haplotype_variables.shape
         interaction_matrix = np.ones((haplotype_variables.shape[0], 1), dtype=np.float32)
         for iv in interacting_variables:
-            interaction_matrix = np.einsum('ij,ik->ijk', interaction_matrix, iv._data)
-            interaction_matrix = interaction_matrix.reshape(n_barcodes, -1)
+            interaction_matrix = np.einsum('ij,ik->ijk', interaction_matrix, iv._data).reshape(n_barcodes, -1)
             variable_names = [f'{v1}_{v2}' for v1 in variable_names for v2 in iv.columns]
+
+        # test singularity
+        hv = np.einsum('ij,ik->ijk', hv, interaction_matrix).reshape(n_barcodes, -1)
+        if np.linalg.matrix_rank(hv, tol=1e-10) < hv.shape[1]:
+            raise ValueError(
+                'The haplotype variable matrix is singular, consider altering experimental design'
+            )
 
         n_interactions = len(variable_names)
 

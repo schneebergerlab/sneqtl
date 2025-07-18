@@ -34,10 +34,7 @@ class Covariates(VariableManager):
             columns += iv.columns
 
         if parental_genotypes is not None:
-            if parental_genotypes_covar_type == 'diploid':
-                pg = parental_genotypes.diploid_covariates
-            else:
-                pg = parental_genotypes.haploid_covariates
+            pg = parental_genotypes.as_covariates()
             sections.append(pg._data)
             columns += pg.columns
 
@@ -59,9 +56,8 @@ class Covariates(VariableManager):
 
         covars = cls(covariate_matrix, index=index, columns=columns, name=name)
         if covars.is_singular:
-            problem_covar = covars.find_dependent_variables()
             raise ValueError(
-                f'Covariate matrix is singular - variables {problem_covar} are dependent (there may be others)'
+                f'Covariate matrix is singular'
             )
         return covars
 

@@ -11,6 +11,9 @@ DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
 
 class CellTypes(VariableManager):
 
+    index_name = 'cb'
+    columns_name = 'celltypes'
+
     @property
     def barcodes(self):
         return self.index
@@ -71,8 +74,11 @@ class CellTypes(VariableManager):
             ).fit(training_sample_pcs)
             max_s = silhouette_score(training_sample_pcs, best_gmm.predict(training_sample_pcs))
 
-        preds = best_gmm.predict_proba(principal_components._data)
-        _, counts = np.unique(preds.argmax(axis=1), return_counts=True)
+        preds = best_gmm.predict(principal_components._data)
+        _, inv, counts = np.unique(preds, return_inverse=True, return_counts=True)
+        n_barcodes, n_clusters = len(preds), len(counts)
+        preds = np.zeros((n_barcodes, n_clusters))
+        preds[np.arange(n_barcodes), inv] = 1.0
         preds = preds[:, np.argsort(counts)[::-1]]
 
         columns = [f'celltype{i}' for i in range(1, best_gmm.n_components + 1)]

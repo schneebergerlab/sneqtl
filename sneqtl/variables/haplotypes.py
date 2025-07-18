@@ -9,6 +9,9 @@ from .base import VariableManager
 
 class HaplotypeVariables(VariableManager):
 
+    index_name = 'cb'
+    columns_name = 'haplotypes'
+
     def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
         data = np.clip(data, a_max=1, a_min=0)
         super().__init__(data, index, columns, items=None, name=None, dtype=None, frozen=True)
@@ -32,9 +35,7 @@ class HaplotypeVariables(VariableManager):
     @classmethod
     def read_prediction_records(cls, json_fn, cb_whitelist=None,
                                 barcode_query=None, dtype=np.float32):
-        prediction_records = PredictionRecords.read_json(json_fn)
-        if cb_whitelist is not None:
-            prediction_records.filter(cb_whitelist, inplace=True)
+        prediction_records = PredictionRecords.read_json(json_fn, subset=cb_whitelist)
         if barcode_query is not None:
             prediction_records = prediction_records.query(barcode_query)
         barcodes = prediction_records.barcodes
@@ -78,21 +79,3 @@ class HaplotypeVariables(VariableManager):
 
         filtered = self.filter_correlated(control_haplotypes, max_r2)
         return control_haplotypes, filtered
-
-    def estimate_effective_haplotypes(self):
-        '''
-        Estimate the effective number of haplotypes in order to perform FWER correction
-        of p values from eQTL tests (which are not independent due to LD)
-        Uses the Li and Hi method (Heredity volume 95, pages221–227 (2005))
-        '''
-        H_eff = 0
-        for chrom, haps in self.iter_chroms():
-            corr = np.corrcoef(haps._data, rowvar=False)
-            eig = np.abs(np.linalg.eigvalsh(corr))
-            chrom_H_eff = np.sum((eig >= 1).astype(int) + (eig - np.floor(eig)))
-            H_eff += round(chrom_H_eff)
-        return H_eff
-
-    @cached_property
-    def h_eff(self):
-        return self.estimate_effective_haplotypes()

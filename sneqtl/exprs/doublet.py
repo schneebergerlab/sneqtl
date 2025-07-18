@@ -36,25 +36,10 @@ def simulate_expression_doublets(exprs_mat, celltype_clusters, n_sim,
     )
 
 
-def predict_expression_doublets(exprs_mat, n_doublets, k_neighbours,
-                                min_var_explained=0.01, max_pcs=50,
-                                n_clusters=None, auto_max_clusters=10,
-                                covariance_type='spherical',
-                                multiplet_factor=0.25,
+def predict_expression_doublets(exprs_mat, principal_components, celltype_clusters,
+                                n_doublets, k_neighbours, multiplet_factor=0.25,
                                 rng=DEFAULT_RNG):
-    principal_components = PrincipalComponents.from_expression(
-        exprs_mat,
-        min_var_explained=min_var_explained,
-        max_pcs=max_pcs,
-        rng=rng,
-    )
-    celltype_clusters = CellTypes.from_principal_components(
-        principal_components,
-        n_clusters=n_clusters,
-        auto_max_clusters=auto_max_clusters,
-        covariance_type=covariance_type,
-        rng=rng
-    )
+
     min_cluster_size = min(celltype_clusters.celltype_counts.values())
 
     if n_doublets > 1:
@@ -71,10 +56,8 @@ def predict_expression_doublets(exprs_mat, n_doublets, k_neighbours,
     syn_doublet_principal_components = principal_components.transform(syn_doublet_exprs_mat)
     X_train = np.concatenate(
         [
-            principal_components.reindex(
-                index=rng.choice(principal_components.barcodes, size=n_sim, replace=True)
-            ),
-            syn_doublet_principal_components.values
+            principal_components.iloc[np.random.randint(0, len(principal_components.barcodes), size=n_sim)],
+            syn_doublet_principal_components._data
         ],
         axis=0,
     )
@@ -89,7 +72,7 @@ def predict_expression_doublets(exprs_mat, n_doublets, k_neighbours,
     knn_classifier = k_nearest_neighbours_classifier(X_train, y_train, k_neighbours)
 
     doublet_pred = pd.Series(
-        knn_classifier(principal_components),
+        knn_classifier(principal_components._data),
         index=principal_components.index,
         name='doublet_prediction',
     )

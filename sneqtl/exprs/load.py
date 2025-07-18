@@ -13,7 +13,7 @@ import pysam
 from joblib import Parallel, delayed
 import click
 
-from snco.load.barcodes import read_cb_whitelist, umi_dedup_directional
+from snco.load.barcodes import umi_dedup_directional
 from sneqtl.variables.exprs import ExpressionVariables
 from sneqtl.io.gtf import parse_gtf
 
@@ -77,10 +77,7 @@ def chunk_data(data, chunk_size=1000):
         yield list(it.islice(d_it, chunk_size))
 
 
-def parallel_scrna_gene_counter(bam_fn, gtf_fn, cb_whitelist_fn, quant_type='gene', njobs=1, **kwargs):
-    cb_whitelist = read_cb_whitelist(cb_whitelist_fn).tolist()
-    if cb_whitelist is not None:
-        log.info(f'Read {len(cb_whitelist)} barcodes from "{cb_whitelist_fn}"')
+def parallel_scrna_gene_counter(bam_fn, gtf_fn, cb_whitelist, quant_type='gene', njobs=1, **kwargs):
     genes = parse_gtf(gtf_fn, model_type=quant_type)
     log.info(f'Read {len(genes)} genes from "{gtf_fn}"')
     log.info(f'Processing genes with {njobs} processes')

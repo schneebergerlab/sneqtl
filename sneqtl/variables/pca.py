@@ -10,6 +10,9 @@ DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
 
 class PrincipalComponents(VariableManager):
 
+    index_name = 'cb'
+    columns_name = 'principal_components'
+
     def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
         super().__init__(data, index, columns, items=None, name=None, dtype=None, frozen=True)
         self._pca = None
@@ -29,7 +32,7 @@ class PrincipalComponents(VariableManager):
         transformed = self._pca.transform(new_expression_variables.T._data)
         return self.__class__(
             transformed[:, :len(self.components)],
-            index=new_expression_variables.index,
+            index=new_expression_variables.columns,
             columns=self.components,
             name=name,
             dtype=transformed.dtype

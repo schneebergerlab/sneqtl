@@ -9,13 +9,13 @@ from snco.main.opts.callbacks import log_parameters
 from snco.defaults import DEFAULT_RANDOM_SEED
 
 
-sneqtl_opts = OptionRegistry(subcommands=['loadexprs', 'concatexprs', 'doubletexprs', 'eqtl', 'peakcall'])
+sneqtl_opts = OptionRegistry(subcommands=['loadexprs', 'concatexprs', 'exprsstats', 'eqtl', 'peakcall'])
 sneqtl_opts.register_callback(log_parameters('sneqtl'))
 
 
 sneqtl_opts.argument(
     'exprs-mat-dir',
-    subcommands=['doubletexprs', 'eqtl'],
+    subcommands=['exprsstats', 'eqtl'],
     required=True,
     nargs=1,
     type=_input_dir_type,
@@ -33,7 +33,7 @@ sneqtl_opts.argument(
 
 sneqtl_opts.argument(
     'haplo-json-fn',
-    subcommands=['doubletexprs', 'eqtl'],
+    subcommands=['eqtl'],
     required=True,
     nargs=1,
     type=_input_file_type,
@@ -70,7 +70,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '-o', '--output-tsv-fn',
-    subcommands=['doubletexprs', 'peakcall'],
+    subcommands=['exprsstats', 'peakcall'],
     required=True,
     type=_output_file_type,
     help='Output prefix'
@@ -88,7 +88,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '-c', '--cb-stats-fn',
-    subcommands=['doubletexprs', 'eqtl'],
+    subcommands=['loadexprs', 'exprsstats', 'eqtl'],
     required=False,
     type=_input_file_type,
     help='cell barcode stats (output of snco predict/stats)'
@@ -110,15 +110,6 @@ sneqtl_opts.option(
     required=True,
     type=_input_file_type,
     help='GTF file name'
-)
-
-
-sneqtl_opts.option(
-    '-c', '--cb-whitelist-fn',
-    subcommands=['loadexprs'],
-    required=False,
-    type=_input_file_type,
-    help='cell barcode whitelist'
 )
 
 
@@ -213,13 +204,25 @@ sneqtl_opts.option(
 
 
 sneqtl_opts.option(
-    '--min-cells-exprs',
-    subcommands=['doubletexprs', 'eqtl'],
+    '--rel-min-cells-exprs',
+    subcommands=['exprsstats', 'eqtl'],
     required=False,
     type=click.FloatRange(0.0, 0.5),
     default=0.02,
     help='the minimum proportion of cell barcodes that must express a gene for it to be tested'
 )
+
+
+
+sneqtl_opts.option(
+    '--abs-min-cells-exprs',
+    subcommands=['exprsstats', 'eqtl'],
+    required=False,
+    type=click.IntRange(0, 5000),
+    default=100,
+    help='the minimum number of cell barcodes that must express a gene for it to be tested'
+)
+
 
 
 sneqtl_opts.option(
@@ -233,7 +236,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '--min-pc-var-explained',
-    subcommands=['doubletexprs', 'eqtl'],
+    subcommands=['exprsstats', 'eqtl'],
     required=False,
     type=click.FloatRange(0, 1.0),
     default=0.01,
@@ -269,6 +272,14 @@ sneqtl_opts.option(
 
 
 sneqtl_opts.option(
+    '--ref-genotype', 'reference_genotype',
+    subcommands=['eqtl'],
+    required=False,
+    default=None,
+    help='which genotype to use as a reference (to be dropped in the model)'
+)
+
+sneqtl_opts.option(
     '--celltype/--no-celltype', 'celltype_haplotype_interaction',
     subcommands=['eqtl'],
     required=False,
@@ -279,7 +290,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '--celltype-n-clusters',
-    subcommands=['doubletexprs', 'eqtl'],
+    subcommands=['exprsstats', 'eqtl'],
     required=False,
     type=click.IntRange(2, 10),
     default=None,
@@ -300,7 +311,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '--cb-filter-exprs',
-    subcommands=['doubletexprs', 'eqtl'],
+    subcommands=['loadexprs', 'exprsstats', 'eqtl'],
     required=False,
     type=str,
     default=None,
@@ -384,7 +395,7 @@ sneqtl_opts.option(
     subcommands=['eqtl', 'peakcall'],
     required=False,
     type=click.IntRange(0, 5e6),
-    default=5e6,
+    default=5e5,
     help='Maximum distance from edge of eQTL CI boundary to gene for it to be considered a cis-eQTL'
 )
 
@@ -412,7 +423,7 @@ sneqtl_opts.option(
 
 sneqtl_opts.option(
     '-v', '--verbosity',
-    subcommands=['loadexprs', 'concatexprs', 'doubletexprs', 'eqtl', 'peakcall'],
+    subcommands=['loadexprs', 'concatexprs', 'exprsstats', 'eqtl', 'peakcall'],
     required=False,
     expose_value=False,
     metavar='LVL',

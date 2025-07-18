@@ -7,6 +7,9 @@ from .base import VariableManager, SparseMixIn
 
 class ExpressionVariables(VariableManager, SparseMixIn):
 
+    index_name = 'gene_id'
+    columns_name = 'cb'
+
     @property
     def gene_ids(self):
         return self.index

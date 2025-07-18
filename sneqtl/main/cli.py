@@ -25,11 +25,11 @@ def concatexprs_subcommand(**kwargs):
     run_concatexprs(**kwargs)
 
 
-@sneqtl.command('doubletexprs')
-@sneqtl_opts('doubletexprs')
-def doubletexprs_subcommand(**kwargs):
-    from ..exprs import run_doubletexprs
-    run_doubletexprs(**kwargs)
+@sneqtl.command('exprsstats')
+@sneqtl_opts('exprsstats')
+def exprsstats_subcommand(**kwargs):
+    from ..exprs import run_exprsstats
+    run_exprsstats(**kwargs)
 
 
 @sneqtl.command('eqtl')

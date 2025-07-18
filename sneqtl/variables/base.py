@@ -94,6 +94,10 @@ class _LocIndexer:
 
 
 class VariableManager:
+
+    index_name = None
+    columns_name = None
+    
     def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
         self.name = self.__class__.__name__ if name is None else name
         if dtype is not None:
@@ -229,6 +233,12 @@ class VariableManager:
             dtype=data.dtype
         )
 
+    def drop(self, index=None, columns=None, items=None):
+        index = [i for i in self.index if i not in index] if index is not None else None
+        columns = [i for i in self.columns if i not in columns] if columns is not None else None
+        items = [i for i in self.items if i not in items] if items is not None else None
+        return self.reindex(index=index, columns=columns, items=items)
+
     @classmethod
     def from_dataframe(cls, df, copy=True):
         data = df.to_numpy(copy=copy)
@@ -243,8 +253,8 @@ class VariableManager:
         if self._data.ndim == 2:
             return pd.DataFrame(
                 self._data,
-                index=self.index,
-                columns=self.columns,
+                index=pd.Index(self.index, name=self.index_name),
+                columns=pd.Index(self.columns, name=self.columns_name),
                 copy=copy
             )
         elif self._data.ndim == 3:
@@ -316,25 +326,6 @@ class VariableManager:
 
         rank = np.linalg.matrix_rank(X, tol=tol)
         return rank < n_cols
-
-    def find_dependent_variables(self):
-        if self.ndim != 2:
-            raise ValueError('singular_minor_index is only valid for 2D arrays')
-
-
-        tol = 1e-10
-        X = self._data
-        n_cols = X.shape[1]
-        if max_k is None:
-            max_k = n_cols
-
-        for k in range(2, max_k + 1):
-            for cols in it.combinations(range(n_cols), k):
-                sub = X[:, cols]
-                if np.linalg.matrix_rank(sub, tol=tol) < k:
-                    return [self.columns[i] for i in cols]
-        return None
-
 
     def drop_uninformative(self, tol=1e-8, axis=0):
         if self._data.ndim == 2:

@@ -26,6 +26,7 @@ def _check_aligned(args, attr):
 
 
 def check_aligned(*args, axis=0):
+    args = [a for a in args if a is not None]
     if len(args) < 1:
         raise ValueError('At least one object should be provided')
     attr = {0: 'index', 1: 'columns', 2: 'items'}[axis]
