@@ -354,7 +354,7 @@ sneqtl_opts.option(
     subcommands=['eqtl', 'peakcall'],
     required=False,
     type=click.FloatRange(0, 1),
-    default=1e-3,
+    default=1e-2,
     help='P value threshold used for peak calling'
 )
 

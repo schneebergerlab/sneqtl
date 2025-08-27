@@ -51,13 +51,14 @@ class HaplotypeInteractionVariables(VariableManager):
         if parental_genotypes is not None:
             hv = parental_genotypes.get_haplotype_variables(
                 haplotype_variables.iloc[:, 0],
-            )._data
+            )
             if hv.is_singular:
                 raise ValueError(
                     'The haplotype variable matrix is singular, consider altering experimental design'
                 )
             variable_names = hv.columns
             n_genotypes = len(variable_names)
+            hv = hv._data
         else:
             hv = haplotype_variables.iloc[:, 0].reshape(-1, 1)
             variable_names = ['haplo']

@@ -53,9 +53,13 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
              f'{len(haplotypes.columns)} bins to be tested')
 
     if expression_variables.barcodes != haplotypes.barcodes:
-        cb_whitelist = sorted(set(expression_variables.barcodes).intersection(haplotypes.barcodes))
+        cb_whitelist = sorted(
+            set(expression_variables.barcodes).intersection(haplotypes.barcodes).intersection(cb_whitelist)
+        )
         expression_variables = expression_variables.reindex(columns=cb_whitelist)
         haplotypes = haplotypes.reindex(index=cb_whitelist)
+        cb_stats = cb_stats.reindex(index=cb_whitelist)
+        assert expression_variables.barcodes == haplotypes.barcodes
     else:
         cb_whitelist = list(expression_variables.barcodes)
     principal_components = PrincipalComponents.from_expression(
