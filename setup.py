@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='sneqtl',
-    version='0.1',
+    version='1.0',
     description=(
         'eQTL mapping for single cell/nucleus sequencing data'
     ),
