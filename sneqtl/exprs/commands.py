@@ -2,8 +2,8 @@ from logging import getLogger
 import numpy as np
 import pandas as pd
 
-from snco.records import PredictionRecords
-from snco.defaults import DEFAULT_RANDOM_SEED
+from coelsch.records import PredictionRecords
+from coelsch.defaults import DEFAULT_RANDOM_SEED
 
 from sneqtl.io.misc import read_cb_stats
 from sneqtl.variables.exprs import ExpressionVariables
@@ -46,7 +46,7 @@ def run_concatexprs(output_mat_dir, exprs_mat_dir, merge_suffixes=None):
     for path in exprs_mat_dir:
         e = ExpressionVariables.read_matrix_market(path)
         exprs_objects.append(e)
-    concat_mtx = concat(mtx_objects, merge_suffixes, axis=1)
+    concat_mtx = concat(*exprs_objects, suffixes=merge_suffixes, axis=1)
     concat_mtx.write_matrix_market(output_mat_dir)
 
 

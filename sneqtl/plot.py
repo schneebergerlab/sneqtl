@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 from matplotlib.colors import Normalize, LinearSegmentedColormap
 import seaborn as sns
 
-from snco.plot import chrom_subplots, chrom2d_subplots
+from coelsch.plot import chrom_subplots, chrom2d_subplots
 
 DEFAULT_PALETTE = sns.color_palette(
     ['#0072b2', '#d55e00', '#009e73', '#f0e442', '#cc79a7', '#56b4e9', '#e69f00']
@@ -20,7 +20,7 @@ def eqtl_scatterplot(eqtl_peaks, chrom_sizes,
                      point_size_lod_norm=(5, 50),
                      hue_palette=DEFAULT_PALETTE,
                      errorbar_colour='#777777', cis_shade_colour='#f0e442',
-                     cis_range=5e5):
+                     cis_range=5e5, rasterise=True):
     chroms = list(chrom_sizes)
     fig, axes = chrom2d_subplots(chrom_sizes, fig_size)
     if hue_order is None:
@@ -38,7 +38,8 @@ def eqtl_scatterplot(eqtl_peaks, chrom_sizes,
             size_norm=point_size_lod_norm,
             hue_order=hue_order,
             palette=hue_palette[:len(hue_order)],
-            ax=axes[i][j]
+            ax=axes[i][j],
+            rasterized=rasterise
         )
         axes[i][j].errorbar(
             x=ax_peaks.pos_eqtl,
@@ -49,7 +50,8 @@ def eqtl_scatterplot(eqtl_peaks, chrom_sizes,
             zorder=0,
             linestyle='None',
             marker='None',
-            alpha=0.75
+            alpha=0.75,
+            rasterized=rasterise
         )
         try:
             axes[i][j].legend_.remove()
@@ -75,7 +77,7 @@ def eqtl_scatterplot(eqtl_peaks, chrom_sizes,
 
 
 def label_transform(label, coltype):
-    if label == coltype:
+    if label in ('lod_score', 'lrt_pval'):
         return 'All'
     else:
         return label[:-(len(coltype) + 1)].capitalize()
@@ -93,9 +95,11 @@ class eQTLPlotter:
         if coltype == 'lod_score':
             self._col_transform = lambda lod: lod
             self.ylabel = 'LOD score'
+            self.plot_threshold = False
         elif coltype == 'pval':
             self._col_transform = lambda pval: -np.log10(pval)
             self.ylabel = 'Negative log10 FDR'
+            self.plot_threshold = True
         else:
             raise ValueError('coltype must be either lod_score or pval')
         if usecols is None:
@@ -113,15 +117,20 @@ class eQTLPlotter:
         self.figsize = figsize        
 
     def __call__(self, gene_id):
-        gene_eqtl_results = self.eqtl_results.query('gene_id == @gene_id')
+        try:
+            gene_eqtl_results = self.eqtl_results[gene_id].to_dataframe()
+        except:
+            raise ValueError('Gene was not tested')
+        if self.plot_threshold:
+            threshold = self._col_transform(gene_eqtl_results.attrs['lrt_pval_threshold'])
+        else:
+            threshold = None
         gene_eqtl_results = gene_eqtl_results.melt(
             id_vars=['chrom', 'pos'],
             value_vars=self.plot_columns,
             var_name='hue',
             value_name='y'
         )
-        if not len(gene_eqtl_results):
-            raise ValueError('Gene was not tested')
         gene_eqtl_results = gene_eqtl_results.assign(
             hue=gene_eqtl_results.hue.map(self._label_mapper),
             y=gene_eqtl_results.y.apply(self._col_transform)
@@ -152,11 +161,13 @@ class eQTLPlotter:
                 for _, se in self.eqtl_peaks.query('gene_id == @gene_id & chrom_eqtl == @chrom').iterrows():
                     ax.axvline(se.pos_eqtl, ls='--', color='#777777', zorder=-1)
                     ax.axvspan(se.left_ci_eqtl, se.right_ci_eqtl, color='#777777', zorder=-1, alpha=0.2)
+            if self.plot_threshold:
+                ax.axhline(threshold, ls='--', color='#252525')
 
         axes[0].set_ylabel(self.ylabel)
         for ax in axes[:-1]:
             ax.legend_.remove()
-        axes[-1].legend_.set_title('')
+        axes[-1].legend_.set_title('Model parameter')
 
         plt.tight_layout(pad=0.2)
         return axes
@@ -164,18 +175,21 @@ class eQTLPlotter:
 
 class HaplotypeExpressionPlotter:
 
-    def __init__(self, haplotypes, exprs_mat, eqtls=None, gene_locs=None,
+    def __init__(self, haplotypes, exprs_mat, eqtl_results=None, gene_locs=None,
                  parental_genotypes=None, celltypes=None, cb_whitelist=None,
-                 palette=DEFAULT_PALETTE, figsize=(12.5, 3)):
+                 variants=None, palette=DEFAULT_PALETTE, figsize=(12.5, 3)):
         if cb_whitelist is None:
             self.cb_whitelist = list(
                 set(haplotypes.barcodes).intersection(exprs_mat.columns)
             )
             if not len(self.cb_whitelist):
                 raise ValueError('haplotypes and exprs_mat barcodes do not overlap')
+        else:
+            self.cb_whitelist = cb_whitelist
         self.haplotypes = haplotypes.filter(self.cb_whitelist, inplace=False)
+        self.variants = variants
         self.exprs_mat = exprs_mat.loc[:, self.cb_whitelist]
-        self.eqtls = eqtls
+        self.eqtl_results = eqtl_results
         self.gene_locs = gene_locs
         if parental_genotypes is not None:
             parental_genotypes = parental_genotypes.loc[self.cb_whitelist].rename('Genotype')
@@ -192,9 +206,9 @@ class HaplotypeExpressionPlotter:
             haplotype = self.haplotypes.get_haplotype(gene_loc.chrom, gene_loc.pos, self.cb_whitelist)
             label = 'cis-haplotype'
         elif haplotype_type == 'best_hit':
-            if self.eqtls is None:
-                raise ValueError('eqtls were not provided')
-            gene_eqtls = self.eqtls.query('gene_id == @gene_id')
+            if self.eqtl_results is None:
+                raise ValueError('eqtl_results were not provided')
+            gene_eqtls = self.eqtl_results[gene_id].to_dataframe()
             if not len(gene_eqtls):
                 raise ValueError('cannot find best_hit, gene was not tested')
             best_hit = gene_eqtls.loc[gene_eqtls.lod_score.idxmax()]
@@ -207,9 +221,10 @@ class HaplotypeExpressionPlotter:
                 haplotype_pos = int(haplotype_pos)
                 haplotype = self.haplotypes.get_haplotype(haplotype_chrom, haplotype_pos, self.cb_whitelist)
             else:
-                if self.eqtls is None:
-                    raise ValueError('eqtls were not provided')
-                gene_eqtls = self.eqtls.query('gene_id == @gene_id & chrom == @haplotype_chrom')
+                if self.eqtl_results is None:
+                    raise ValueError('eqtl_results were not provided')
+                gene_eqtls = self.eqtl_results[gene_id].to_dataframe()
+                gene_eqtls = gene_eqtls.query('chrom == @haplotype_chrom')
                 if not len(gene_eqtls):
                     raise ValueError('cannot find best_hit, gene was not tested')
                 best_hit = gene_eqtls.loc[gene_eqtls.lod_score.idxmax()]

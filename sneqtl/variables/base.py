@@ -239,6 +239,17 @@ class VariableManager:
         items = [i for i in self.items if i not in items] if items is not None else None
         return self.reindex(index=index, columns=columns, items=items)
 
+    def dropna(self, axis=0, how='any'):
+        if how not in ('any', 'all'):
+            raise ValueError("how must be 'any' or 'all'")
+        reduce_axes = [i for i in range(self.ndim) if i != axis]
+        reduce_method = np.any if how == 'any' else np.all
+        drop_mask = reduce_method(np.isnan(self._data), axis=reduce_axes)
+        axis_name = {0: 'index', 1: 'columns', 2: 'items'}[axis]
+        axis_labels = getattr(self, axis_name)
+        keep_labels = [lab for lab, dm in zip(axis_labels, drop_mask) if not dm]
+        return self.reindex(**{axis_name: keep_labels})
+
     @classmethod
     def from_dataframe(cls, df, copy=True):
         data = df.to_numpy(copy=copy)
@@ -352,10 +363,26 @@ class VariableManager:
             kwargs['items'] = axis_values
         return self.reindex(**kwargs)
 
+    def drop_rank_dependent(self, tol=1e-8):
+        if self.ndim != 2:
+            raise ValueError("X must be 2D")
+        n, n_feat = self._data.shape
+        keep_columns = self.columns
+        X_i = np.concatenate([np.ones((n, 1)), self._data.astype(float)], axis=1)
+        while len(keep_columns) > 1:
+            if np.linalg.matrix_rank(X_i, tol=tol) == (n_feat + 1):
+                break
+            U, s, Vt = np.linalg.svd(X_i, full_matrices=False)
+            v = Vt[-1]
+            j = int(np.argmax(np.abs(v[1:])))
+            keep_columns = [col for i, col in enumerate(keep_columns) if i != j]
+            X_i = np.delete(X_i, j + 1, axis=1)
+            n_feat -= 1
+        return self.reindex(columns=keep_columns)
+
     def as_covariates(self):
-        covar = self.drop_uninformative()
-        if covar.has_row_sum_constraint:
-            covar = covar.reindex(columns=covar.columns[1:])
+        covar = self.drop_uninformative(axis=1)
+        covar = covar.drop_rank_dependent()
         return covar
 
     def get_correlated(self, other, min_r2):

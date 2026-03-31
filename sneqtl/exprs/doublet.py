@@ -1,9 +1,9 @@
 import logging
 import numpy as np
 import pandas as pd
+from scipy.spatial import KDTree
 
-from snco.predict.doublet import k_nearest_neighbours_classifier
-from snco.defaults import DEFAULT_RANDOM_SEED
+from coelsch.defaults import DEFAULT_RANDOM_SEED
 from sneqtl.variables.exprs import ExpressionVariables
 from sneqtl.variables.pca import PrincipalComponents
 from sneqtl.variables.celltypes import CellTypes
@@ -11,6 +11,35 @@ from sneqtl.variables.celltypes import CellTypes
 
 log = logging.getLogger('sneqtl')
 DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
+
+
+def k_nearest_neighbours_classifier(X_train, y_train, k_neighbours):
+    """
+    Constructs a k-nearest neighbors classifier using KDTree.
+
+    Parameters
+    ----------
+    X_train : array-like
+        Training feature matrix.
+    y_train : array-like
+        Labels corresponding to training data.
+    k_neighbours : int
+        Number of neighbors to use in prediction.
+
+    Returns
+    -------
+    callable
+        A function that takes an array `X_predict` and returns predicted probabilities.
+    """
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
+    kd = KDTree(X_train)
+
+    def _knn(X_predict):
+        _, knn_idx = kd.query(X_predict, k=k_neighbours)
+        return y_train[knn_idx].mean(axis=1)
+
+    return _knn
 
 
 def simulate_expression_doublets(exprs_mat, celltype_clusters, n_sim,

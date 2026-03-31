@@ -17,7 +17,7 @@ setup(
     ],
     scripts=['scripts/single_cell_gene_counts.py'],
     install_requires=[
-        'snco',
+        'coelsch',
         'numpy',
         'scipy',
         'pandas',

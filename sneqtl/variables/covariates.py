@@ -16,7 +16,7 @@ class Covariates(VariableManager):
     @classmethod
     def from_variables(cls, *, interacting_variables=None, parental_genotypes=None,
                        covariate_haplotypes=None, base_covariates=None,
-                       parental_genotypes_covar_type='diploid', name=None):
+                       genotype_covariates_as_pcs=False, variants=None, name=None):
         columns = ['const',]
         sections = []
 
@@ -34,17 +34,21 @@ class Covariates(VariableManager):
             columns += iv.columns
 
         if parental_genotypes is not None:
-            pg = parental_genotypes.as_covariates()
+            pg = parental_genotypes.as_covariates(
+                variants=variants, as_pcs=genotype_covariates_as_pcs
+            )
             sections.append(pg._data)
             columns += pg.columns
 
         if covariate_haplotypes is not None:
-            sections.append(covariate_haplotypes._data)
-            columns += covariate_haplotypes.columns
+            ch = covariate_haplotypes.as_covariates()
+            sections.append(ch._data)
+            columns += ch.columns
 
         if base_covariates is not None:
-            sections.append(base_covariates._data)
-            columns += base_covariates.columns
+            bc = base_covariates.as_covariates()
+            sections.append(bc._data)
+            columns += bc.columns
 
         if not sections:
             return None

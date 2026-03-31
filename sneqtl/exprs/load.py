@@ -13,7 +13,7 @@ import pysam
 from joblib import Parallel, delayed
 import click
 
-from snco.load.barcodes import umi_dedup_directional
+from coelsch.load.barcodes import umi_dedup_directional
 from sneqtl.variables.exprs import ExpressionVariables
 from sneqtl.io.gtf import parse_gtf
 

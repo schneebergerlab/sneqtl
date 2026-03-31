@@ -1,8 +1,14 @@
 import itertools as it
 from functools import cached_property
 import numpy as np
+
+from coelsch.load.genotype import GenotypeKey
 from .base import VariableManager
+from .pca import PrincipalComponents
 from .arr_utils import get_dummies
+
+DEFAULT_RANDOM_SEED = 101
+DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
 
 
 class ParentalGenotypesContainer:
@@ -26,32 +32,52 @@ class ParentalGenotypesContainer:
     def columns(self):
         return self._hap1.columns
 
-    def as_covariates(self):
-        haploid_genotypes = VariableManager(
-            self._hap1._data + self._hap2._data,
-            index=self._hap1.index,
-            columns=self._hap1.columns,
-        ).drop_uninformative(axis=1)
-        haploid_genotypes = haploid_genotypes.drop(columns=[self._ref_geno])
-        if haploid_genotypes.has_row_sum_constraint:
-            haploid_genotypes = haploid_genotypes.reindex(columns=haploid_genotypes.columns[1:])
-        return haploid_genotypes
+    def as_covariates(self, variants=None, as_pcs=False,
+                      min_var_explained=0.01, max_pcs=10,
+                      rng=DEFAULT_RNG):
+        if not as_pcs:
+            haploid_genotypes = VariableManager(
+                self._hap1._data + self._hap2._data,
+                index=self._hap1.index,
+                columns=self._hap1.columns,
+            ).drop_uninformative(axis=1)
+            haploid_genotypes = haploid_genotypes.drop(columns=[self._ref_geno])
+            haploid_genotypes = haploid_genotypes.drop_rank_dependent()
+            return haploid_genotypes
+        else:
+            return PrincipalComponents.from_variants(
+                variants, self,
+                min_var_explained=min_var_explained,
+                max_pcs=max_pcs,
+            )
 
-    def get_haplotype_variables(self, haplotype):
+    def get_haplotype_variables(self, haplotype, variants=None):
         haplotype = haplotype.reshape(-1, 1)
-        hap1_vars = self._hap1._data * (1 - haplotype)
-        hap2_vars = self._hap2._data * haplotype
-        hap_var_data = hap1_vars + hap2_vars
-        columns=[f'haplo_{geno}' for geno in self._hap1.columns]
-
-        hap_vars = VariableManager(
-            hap_var_data,
-            index=self._hap1.index,
-            columns=columns
-        ).drop_uninformative(axis=1)
-        hap_vars = hap_vars.drop(columns=[f'haplo_{self._ref_geno}'])
-        if hap_vars.has_row_sum_constraint:
-            hap_vars = hap_vars.reindex(columns=hap_vars.columns[1:])
+        if variants is None:
+            hap1_vars = self._hap1._data * (1 - haplotype)
+            hap2_vars = self._hap2._data * haplotype
+            hap_var_data = (hap1_vars + hap2_vars)
+            columns=[f'haplo_{geno}' for geno in self._hap1.columns]
+            # shape (n_barcodes, n_features)
+            hap_vars = VariableManager(
+                hap_var_data,
+                index=self._hap1.index,
+                columns=columns
+            )
+            # remove low variance features
+            hap_vars = hap_vars.drop_uninformative(axis=1)
+            hap_vars = hap_vars.drop(columns=[f'haplo_{self._ref_geno}'])
+        else:
+            hap1_vars = (variants._data @ self._hap1._data.T) * (1 - haplotype.T)
+            hap2_vars = (variants._data @ self._hap2._data.T) * haplotype.T
+            hap_var_data = (hap1_vars + hap2_vars)[..., None]
+            # shape (n_variants, n_barcodes, 1)
+            hap_vars = VariableManager(
+                hap_var_data,
+                index=variants.index,
+                columns=self._hap1.index,
+                items=['alt_snp',]
+            )
         return hap_vars
 
     @classmethod
@@ -60,7 +86,7 @@ class ParentalGenotypesContainer:
         genotypes = list(parental_genotypes.values())
 
         # Split genotypes into hap1 and hap2
-        hap1, hap2 = zip(*(g.split(':') for g in genotypes))
+        hap1, hap2 = zip(*(GenotypeKey.from_str(g).genotype for g in genotypes))
         hap1 = np.array(hap1)
         hap2 = np.array(hap2)
         all_haplotypes = np.unique([hap1, hap2])

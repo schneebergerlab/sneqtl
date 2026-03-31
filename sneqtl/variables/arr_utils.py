@@ -37,7 +37,7 @@ def corrwith(arr1, arr2, axis=0):
     )
 
     with np.errstate(divide='ignore', invalid='ignore'):
-        r = (num / denom)**2
+        r = (num / denom)
         r[denom == 0] = np.nan
 
     return r

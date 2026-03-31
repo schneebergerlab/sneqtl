@@ -4,6 +4,7 @@ import joblib
 from .base import VariableManager
 from .genotypes import ParentalGenotypesContainer
 from .haplotypes import HaplotypeVariables
+from .variants import VariantVariables
 
 
 class HaplotypeInteractionVariables(VariableManager):
@@ -26,17 +27,25 @@ class HaplotypeInteractionVariables(VariableManager):
 
     @classmethod
     def from_cross_product(cls, haplotype_variables,
-                           parental_genotypes=None, interacting_variables=None,
+                           parental_genotypes=None, variant_variables=None, interacting_variables=None,
                            name=None, memmap_manager=None, dtype=np.float32):
 
-        if not isinstance(haplotype_variables, HaplotypeVariables):
-            raise ValueError('haplotype_variables should be of type HaplotypeVariables')
+        #if not isinstance(haplotype_variables, HaplotypeVariables):
+        #    raise ValueError('haplotype_variables should be of type HaplotypeVariables')
 
         if parental_genotypes is not None: 
-            if not isinstance(parental_genotypes, ParentalGenotypesContainer):
-                raise ValueError('parental_genotypes should be of type ParentalGenotypesContainer')
+        #    if not isinstance(parental_genotypes, ParentalGenotypesContainer):
+        #        raise ValueError('parental_genotypes should be of type ParentalGenotypesContainer')
             if haplotype_variables.index != parental_genotypes.index:
                 raise ValueError('Index mismatch between haplotypes and parental genotypes')
+        if variant_variables is not None:
+            if parental_genotypes is None:
+                raise ValueError('variant_variables can only be supplied in conjunction with parental_genotypes')
+        #    if not isinstance(variant_variables, VariantVariables):
+        #        raise ValueError('variant_variables should be of type VariantVariables')
+            if variant_variables.columns != parental_genotypes.columns:
+                raise ValueError('Column mismatch between haplotypes and parental genotypes')
+            
 
         if interacting_variables is None:
             interacting_variables = []
@@ -48,21 +57,29 @@ class HaplotypeInteractionVariables(VariableManager):
             if haplotype_variables.index != iv.index:
                 raise ValueError('Index mismatch between haplotypes and interacting variables')
 
+        # use the first bin to make variables and determine which are present
         if parental_genotypes is not None:
-            hv = parental_genotypes.get_haplotype_variables(
-                haplotype_variables.iloc[:, 0],
-            )
-            if hv.is_singular:
-                raise ValueError(
-                    'The haplotype variable matrix is singular, consider altering experimental design'
+            test_hap = haplotype_variables.columns[0]
+            if variant_variables is None:
+                hv = parental_genotypes.get_haplotype_variables(
+                    haplotype_variables.loc[:, test_hap], variants=None
                 )
-            variable_names = hv.columns
-            n_genotypes = len(variable_names)
-            hv = hv._data
+                if hv.is_singular:
+                    raise ValueError(
+                        'The haplotype variable matrix is singular, consider altering experimental design'
+                    )
+                variable_names = hv.columns
+                hv = hv._data
+            else:
+                hv = parental_genotypes.get_haplotype_variables(
+                    haplotype_variables.loc[:, test_hap],
+                    variants=variant_variables.get_bin_variants(*test_hap)
+                )
+                variable_names = hv.items
+                hv = hv._data[0, ...]
         else:
             hv = haplotype_variables.iloc[:, 0].reshape(-1, 1)
             variable_names = ['haplo']
-            n_genotypes = None
 
         # precompute the interaction matrix from all the variables
         # except parental genotype (which is a bit more complex)
@@ -80,35 +97,52 @@ class HaplotypeInteractionVariables(VariableManager):
             )
 
         n_interactions = len(variable_names)
+        n_test_positions = n_haplo_positions if variant_variables is None else variant_variables.shape[0]
+        ix_columns = haplotype_variables.columns if variant_variables is None else variant_variables.index
 
         if memmap_manager is not None:
             cross_prod_results = memmap_manager.create_empty(
                 name,
                 index=haplotype_variables.index,
-                columns=haplotype_variables.columns,
+                columns=ix_columns,
                 items=variable_names,
                 dtype=dtype,
                 cls=cls
             )
         else:
             cross_prod_results = cls(
-                np.empty(shape=(n_barcodes, n_haplo_positions, n_interactions), dtype=dtype),
+                np.empty(shape=(n_barcodes, n_test_positions, n_interactions), dtype=dtype),
                 index=haplotype_variables.index,
-                columns=haplotype_variables.columns,
+                columns=ix_columns,
                 items=variable_names,
                 name=name,
                 dtype=dtype,
             )
         cp_arr = cross_prod_results._data
 
-        for h, i in haplotype_variables._column_map.items():
-            hap = haplotype_variables[h]
+        for (chrom, pos), i in haplotype_variables._column_map.items():
+            hap = haplotype_variables[(chrom, pos)]
             if parental_genotypes is not None:
-                hap_vars = parental_genotypes.get_haplotype_variables(hap)._data
+                if variant_variables is not None:
+                    var = variant_variables.get_bin_variants(chrom, pos)
+                else:
+                    var = None
+                # shape (n_snps, n_barcodes, 1) if var is not None, else shape (n_barcodes, n_features)
+                hap_vars = parental_genotypes.get_haplotype_variables(hap, variants=var)
             else:
-                hap_vars = hap.reshape(-1, 1)
-            hap_vars = np.einsum('ij,ik->ijk', hap_vars, interaction_matrix)
-            hap_vars = hap_vars.reshape(n_barcodes, n_interactions)
-            cp_arr[:, i, ...] = hap_vars
+                # no genotype features, shape (n_barcodes, 1)
+                hap_vars = hap.reshape(n_barcodes, 1)
+
+            if hap_vars.ndim == 2:
+                idx = i
+                if not isinstance(hap_vars, np.ndarray):
+                    hap_vars = hap_vars._data
+                hv = np.einsum('ij,ik->ijk', hap_vars, interaction_matrix)
+                hv = hv.reshape(n_barcodes, n_interactions)
+            else:
+                idx = [variant_variables._index_map[v] for v in hap_vars.index]
+                hv = np.einsum('xij,ik->ixjk', hap_vars._data, interaction_matrix)
+                hv = hv.reshape(n_barcodes, var.shape[0], n_interactions)
+            cp_arr[:, idx, ...] = hv
 
         return cross_prod_results

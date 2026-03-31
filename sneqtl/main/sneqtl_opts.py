@@ -1,12 +1,12 @@
 import re
 import click
 
-from snco.main.opts.file_opts import _input_dir_type, _input_file_type, _output_dir_type, _output_file_type
-from snco.main.opts.util_opts import _get_rng
-from snco.main.registry import OptionRegistry
-from snco.main.logger import click_logger
-from snco.main.opts.callbacks import log_parameters
-from snco.defaults import DEFAULT_RANDOM_SEED
+from coelsch.main.opts.file_opts import _input_dir_type, _input_file_type, _output_dir_type, _output_file_type
+from coelsch.main.opts.util_opts import _get_rng
+from coelsch.main.registry import OptionRegistry
+from coelsch.main.logger import click_logger
+from coelsch.main.opts.callbacks import log_parameters
+from coelsch.defaults import DEFAULT_RANDOM_SEED
 
 
 sneqtl_opts = OptionRegistry(subcommands=['loadexprs', 'concatexprs', 'exprsstats', 'eqtl', 'peakcall'])
@@ -41,11 +41,11 @@ sneqtl_opts.argument(
 
 
 sneqtl_opts.argument(
-    'eqtl-tsv-fn',
+    'eqtl-dir',
     subcommands=['peakcall'],
     required=True,
     nargs=1,
-    type=_input_file_type,
+    type=_input_dir_type,
 )
 
 
@@ -91,7 +91,7 @@ sneqtl_opts.option(
     subcommands=['loadexprs', 'exprsstats', 'eqtl'],
     required=False,
     type=_input_file_type,
-    help='cell barcode stats (output of snco predict/stats)'
+    help='cell barcode stats (output of coelsch predict/stats)'
 )
 
 
@@ -110,6 +110,15 @@ sneqtl_opts.option(
     required=True,
     type=_input_file_type,
     help='GTF file name'
+)
+
+
+sneqtl_opts.option(
+    '-V', '--vcf-fn',
+    subcommands=['eqtl'],
+    required=False,
+    type=_input_file_type,
+    help='VCF file name (activates GWAS mode!!)'
 )
 
 
@@ -279,6 +288,37 @@ sneqtl_opts.option(
     help='which genotype to use as a reference (to be dropped in the model)'
 )
 
+
+sneqtl_opts.option(
+    '--min-cells-per-geno',
+    subcommands=['eqtl'],
+    required=False,
+    type=click.IntRange(1, None),
+    default=1,
+    help='the minimum number of barcodes each genotype needs to have to be modelled'
+)
+
+
+sneqtl_opts.option(
+    '-f', '--variant-min-allele-fraction', 'variant_maf',
+    subcommands=['eqtl'],
+    required=False,
+    type=click.FloatRange(1e-2, 1.0),
+    default=0.1,
+    help=('the minimum allele fraction (accounting for number of barcodes per genotype) required '
+          'to model a variant')
+)
+
+
+sneqtl_opts.option(
+    '--geno-as-pcs/--no-geno-as-pcs', 'genotype_covariates_as_pcs',
+    subcommands=['eqtl'],
+    required=False,
+    default=False,
+    help='when generating covariates, whether to use parental genotypes directly or to create PCs. Requires --vcf-fn'
+)
+
+
 sneqtl_opts.option(
     '--celltype/--no-celltype', 'celltype_haplotype_interaction',
     subcommands=['eqtl'],
@@ -306,6 +346,27 @@ sneqtl_opts.option(
     default=None,
     help=('comma separated list of positions (in format Chr1:100000), the haplotypes of which '
           'should be controlled for as covariates in the model')
+)
+
+
+sneqtl_opts.option(
+    '--minP-threshold', 'minP_threshold',
+    subcommands=['eqtl'],
+    required=False,
+    type=click.FloatRange(0, 1),
+    default=0.01,
+    help=('The target family-wise error rate used to derive empirical p-value thresholds '
+          'from the permutation-based minP distribution')
+)
+
+
+sneqtl_opts.option(
+    '--n-perm',
+    subcommands=['eqtl'],
+    required=False,
+    type=click.IntRange(10, 1_000_000),
+    default=1000,
+    help=('The number of permutations to use to generate null minP distributions')
 )
 
 
@@ -346,16 +407,6 @@ sneqtl_opts.option(
     default=0.1,
     help=('Relative LOD score threshold used for secondary peak calling '
           'compared to highest LOD on chromosome')
-)
-
-
-sneqtl_opts.option(
-    '--pval-threshold',
-    subcommands=['eqtl', 'peakcall'],
-    required=False,
-    type=click.FloatRange(0, 1),
-    default=1e-2,
-    help='P value threshold used for peak calling'
 )
 
 
@@ -407,6 +458,23 @@ sneqtl_opts.option(
     type=click.IntRange(min=1),
     default=1,
     help='number of cpu processes to use'
+)
+
+sneqtl_opts.option(
+    '-t', '--pytorch-threads', 'torch_threads_per_process',
+    subcommands=['eqtl',],
+    required=False,
+    type=click.IntRange(min=1),
+    default=1,
+    help='number of pytorch threads to use per process'
+)
+
+
+sneqtl_opts.option(
+    '--resume',
+    subcommands=['eqtl'],
+    is_flag=True,
+    help='resume an existing run - only test genes not already existing'
 )
 
 

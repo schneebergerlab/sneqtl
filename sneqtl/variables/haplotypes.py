@@ -3,7 +3,7 @@ from functools import cached_property
 import joblib
 import numpy as np
 
-from snco.records import PredictionRecords
+from coelsch.records import PredictionRecords
 from .base import VariableManager
 
 
@@ -14,7 +14,7 @@ class HaplotypeVariables(VariableManager):
 
     def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
         data = np.clip(data, a_max=1, a_min=0)
-        super().__init__(data, index, columns, items=None, name=None, dtype=None, frozen=True)
+        super().__init__(data, index, columns, items=None, name=name, dtype=dtype, frozen=frozen)
         self.bin_size = None
         self.chroms = set(chrom for chrom, pos in self.columns)
 
