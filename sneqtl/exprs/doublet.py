@@ -1,14 +1,45 @@
 import logging
 import numpy as np
 import pandas as pd
+from scipy.spatial import KDTree
 
-from ..covars import get_principal_components, create_celltype_clusters
-from snco.predict.doublet import k_nearest_neighbours_classifier
-from snco.defaults import DEFAULT_RANDOM_SEED
+from coelsch.defaults import DEFAULT_RANDOM_SEED
+from sneqtl.variables.exprs import ExpressionVariables
+from sneqtl.variables.pca import PrincipalComponents
+from sneqtl.variables.celltypes import CellTypes
 
 
 log = logging.getLogger('sneqtl')
 DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
+
+
+def k_nearest_neighbours_classifier(X_train, y_train, k_neighbours):
+    """
+    Constructs a k-nearest neighbors classifier using KDTree.
+
+    Parameters
+    ----------
+    X_train : array-like
+        Training feature matrix.
+    y_train : array-like
+        Labels corresponding to training data.
+    k_neighbours : int
+        Number of neighbors to use in prediction.
+
+    Returns
+    -------
+    callable
+        A function that takes an array `X_predict` and returns predicted probabilities.
+    """
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
+    kd = KDTree(X_train)
+
+    def _knn(X_predict):
+        _, knn_idx = kd.query(X_predict, k=k_neighbours)
+        return y_train[knn_idx].mean(axis=1)
+
+    return _knn
 
 
 def simulate_expression_doublets(exprs_mat, celltype_clusters, n_sim,
@@ -27,36 +58,18 @@ def simulate_expression_doublets(exprs_mat, celltype_clusters, n_sim,
     barcode_weights = rng.poisson(multiplet_factor, size=(n_clusters, n_sim)) + 1
     barcode_weights = np.tile(barcode_weights, n_genes).reshape(n_clusters, n_genes, n_sim)
     syn_doublets = np.average(syn_doublets, axis=0, weights=barcode_weights)
-    return pd.DataFrame(
+    return ExpressionVariables(
         syn_doublets,
         index=exprs_mat.index,
+        columns=np.arange(n_sim),
     )
 
 
-def predict_expression_doublets(exprs_mat, haplotypes, n_doublets, k_neighbours,
-                                min_var_explained=0.01, max_pcs=50,
-                                max_pc_haplotype_var_explained=0.05,
-                                n_clusters=None, auto_max_clusters=10,
-                                covariance_type='spherical',
-                                multiplet_factor=0.25,
+def predict_expression_doublets(exprs_mat, principal_components, celltype_clusters,
+                                n_doublets, k_neighbours, multiplet_factor=0.25,
                                 rng=DEFAULT_RNG):
-    principal_components, pca_transform = get_principal_components(
-        exprs_mat, haplotypes,
-        min_var_explained=min_var_explained,
-        max_pcs=max_pcs,
-        max_pc_haplotype_var_explained=max_pc_haplotype_var_explained,
-        return_pca_transformer=True,
-        rng=rng,
-    )
-    celltype_clusters_init = create_celltype_clusters(
-        principal_components,
-        n_clusters=n_clusters,
-        auto_max_clusters=auto_max_clusters,
-        covariance_type=covariance_type,
-        rng=rng
-    )
-    celltype_cluster_counts = celltype_clusters_init.idxmax(axis=1).value_counts()
-    min_cluster_size = celltype_cluster_counts.min()
+
+    min_cluster_size = min(celltype_clusters.celltype_counts.values())
 
     if n_doublets > 1:
         n_sim = int(min(n_doublets, min_cluster_size))
@@ -66,14 +79,14 @@ def predict_expression_doublets(exprs_mat, haplotypes, n_doublets, k_neighbours,
         n_sim = int(min_cluster_size * n_doublets)
 
     syn_doublet_exprs_mat = simulate_expression_doublets(
-        exprs_mat, celltype_clusters_init, n_sim,
+        exprs_mat, celltype_clusters, n_sim,
         multiplet_factor=multiplet_factor,
     )
-    syn_doublet_principal_components = pca_transform(syn_doublet_exprs_mat)
+    syn_doublet_principal_components = principal_components.transform(syn_doublet_exprs_mat)
     X_train = np.concatenate(
         [
-            principal_components.sample(n=n_sim, replace=True, random_state=rng).values,
-            syn_doublet_principal_components.values
+            principal_components.iloc[np.random.randint(0, len(principal_components.barcodes), size=n_sim)],
+            syn_doublet_principal_components._data
         ],
         axis=0,
     )
@@ -88,7 +101,7 @@ def predict_expression_doublets(exprs_mat, haplotypes, n_doublets, k_neighbours,
     knn_classifier = k_nearest_neighbours_classifier(X_train, y_train, k_neighbours)
 
     doublet_pred = pd.Series(
-        knn_classifier(principal_components),
+        knn_classifier(principal_components._data),
         index=principal_components.index,
         name='doublet_prediction',
     )

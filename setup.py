@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='sneqtl',
-    version='0.1',
+    version='1.0',
     description=(
         'eQTL mapping for single cell/nucleus sequencing data'
     ),
@@ -17,7 +17,7 @@ setup(
     ],
     scripts=['scripts/single_cell_gene_counts.py'],
     install_requires=[
-        'snco',
+        'coelsch',
         'numpy',
         'scipy',
         'pandas',

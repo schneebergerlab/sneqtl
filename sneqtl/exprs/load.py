@@ -13,9 +13,8 @@ import pysam
 from joblib import Parallel, delayed
 import click
 
-from snco.load.barcodes import read_cb_whitelist, umi_dedup_directional
-
-from sneqtl.io.mtx import write_matrix_market
+from coelsch.load.barcodes import umi_dedup_directional
+from sneqtl.variables.exprs import ExpressionVariables
 from sneqtl.io.gtf import parse_gtf
 
 
@@ -78,10 +77,7 @@ def chunk_data(data, chunk_size=1000):
         yield list(it.islice(d_it, chunk_size))
 
 
-def parallel_scrna_gene_counter(bam_fn, gtf_fn, cb_whitelist_fn, quant_type='gene', njobs=1, **kwargs):
-    cb_whitelist = read_cb_whitelist(cb_whitelist_fn).tolist()
-    if cb_whitelist is not None:
-        log.info(f'Read {len(cb_whitelist)} barcodes from "{cb_whitelist_fn}"')
+def parallel_scrna_gene_counter(bam_fn, gtf_fn, cb_whitelist, quant_type='gene', njobs=1, **kwargs):
     genes = parse_gtf(gtf_fn, model_type=quant_type)
     log.info(f'Read {len(genes)} genes from "{gtf_fn}"')
     log.info(f'Processing genes with {njobs} processes')
@@ -102,18 +98,20 @@ def parallel_scrna_gene_counter(bam_fn, gtf_fn, cb_whitelist_fn, quant_type='gen
         barcodes.intersection_update(cb_whitelist)
     barcodes = sorted(barcodes)
     log.info(f'Identified {len(barcodes)} barcodes with at least one UMI')
-    barcode_index = {b: i for i, b in enumerate(barcodes)}
+    final_cb_whitelist = set(barcodes)
 
-    features = sorted([g[0] for g in genes])
-    feature_index = {f: i for i, f in enumerate(features)}
+    gene_ids = sorted([g[0] for g in genes])
 
-    matrix = sparse.dok_matrix((len(features), len(barcodes)), dtype=np.int32)
+    gene_ids = sorted([g[0] for g in genes])
+
+    exprs_mat = ExpressionVariables.empty_sparse(
+        index=gene_ids,
+        columns=barcodes,
+        sparse_type='dok',
+        dtype=np.float32,
+    )
     for gene_id, cb_counts in gene_counts.items():
-        fi = feature_index[gene_id]
         for cb, count in cb_counts.items():
-            try:
-                bi = barcode_index[cb]
-            except KeyError:
-                continue
-            matrix[fi, bi] = count
-    return features, barcodes, matrix
+            if cb in final_cb_whitelist:
+                exprs_mat.loc[gene_id, cb] = count
+    return exprs_mat
