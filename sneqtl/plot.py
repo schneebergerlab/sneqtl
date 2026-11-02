@@ -86,12 +86,13 @@ def label_transform(label, coltype):
 class eQTLPlotter:
 
     def __init__(self, eqtl_results, chrom_sizes, eqtl_peaks=None, gene_locs=None,
-                 coltype='lod_score', usecols=None, labels=None,
+                 coltype='lod_score', usecols=None, labels=None, style='line',
                  palette=DEFAULT_PALETTE, figsize=(12.5, 3)):
         self.eqtl_results = eqtl_results
         self.chrom_sizes = chrom_sizes
         self.eqtl_peaks = eqtl_peaks
         self.gene_locs = gene_locs
+        self.style = style
         if coltype == 'lod_score':
             self._col_transform = lambda lod: lod
             self.ylabel = 'LOD score'
@@ -143,20 +144,44 @@ class eQTLPlotter:
         else:
             gene_chrom, gene_pos = None, None
         fig, axes = chrom_subplots(self.chrom_sizes, figsize=self.figsize)
+        axes = axes.squeeze()
         for (chrom, chrom_eqtl_results), ax in zip(gene_eqtl_results.groupby('chrom'), axes):
-            sns.lineplot(
-                x='pos',
-                y='y',
-                hue='hue',
-                data=chrom_eqtl_results,
-                drawstyle='steps-post',
-                ax=ax,
-                hue_order=self.labels,
-                palette=self.palette,
-                estimator=None,
-            )
+            if self.style == 'line':
+                sns.lineplot(
+                    x='pos',
+                    y='y',
+                    hue='hue',
+                    data=chrom_eqtl_results,
+                    drawstyle='steps-post',
+                    ax=ax,
+                    hue_order=self.labels,
+                    palette=self.palette,
+                    estimator=None,
+                )
+            elif self.style == 'scatter':
+                sns.scatterplot(
+                    x='pos',
+                    y='y',
+                    hue='hue',
+                    data=chrom_eqtl_results,
+                    ax=ax,
+                    hue_order=self.labels,
+                    palette=self.palette,
+                    edgecolor='none',
+                    alpha=0.5,
+                    s=3,
+                )
             if chrom == gene_chrom:
-                ax.axvline(gene_pos, ls='-', color='#252525', zorder=-1)
+                g = ax.annotate(
+                    gene_id,  # no text
+                    xy=(gene_pos, 1.0),        # arrow tip (on x-axis)
+                    xycoords=('data', 'axes fraction'),
+                    xytext=(gene_pos, 1.1),    # start a bit above
+                    textcoords=('data', 'axes fraction'),
+                    ha='center',
+                    arrowprops=dict(arrowstyle='-|>', lw=1.5)
+                )
+                g.set_in_layout(False)
             if self.eqtl_peaks is not None:
                 for _, se in self.eqtl_peaks.query('gene_id == @gene_id & chrom_eqtl == @chrom').iterrows():
                     ax.axvline(se.pos_eqtl, ls='--', color='#777777', zorder=-1)
@@ -170,7 +195,7 @@ class eQTLPlotter:
         axes[-1].legend_.set_title('Model parameter')
 
         plt.tight_layout(pad=0.2)
-        return axes
+        return fig, axes
 
 
 class HaplotypeExpressionPlotter:
@@ -203,7 +228,7 @@ class HaplotypeExpressionPlotter:
     def get_haplotype(self, gene_id, haplotype_type, haplotype_chrom=None, haplotype_pos=None):
         if haplotype_type == 'cis':
             gene_loc = self.gene_locs.loc[gene_id]
-            haplotype = self.haplotypes.get_haplotype(gene_loc.chrom, gene_loc.pos, self.cb_whitelist)
+            haplotype = self.haplotypes.haplotype_to_pandas(gene_loc.chrom, gene_loc.pos, self.cb_whitelist)
             label = 'cis-haplotype'
         elif haplotype_type == 'best_hit':
             if self.eqtl_results is None:
@@ -212,14 +237,14 @@ class HaplotypeExpressionPlotter:
             if not len(gene_eqtls):
                 raise ValueError('cannot find best_hit, gene was not tested')
             best_hit = gene_eqtls.loc[gene_eqtls.lod_score.idxmax()]
-            haplotype = self.haplotypes.get_haplotype(best_hit.chrom, best_hit.pos, self.cb_whitelist)
+            haplotype = self.haplotypes.haplotype_to_pandas(best_hit.chrom, best_hit.pos, self.cb_whitelist)
             label= f'Haplotype at {best_hit.chrom}:{best_hit.pos}'
         elif haplotype_type == 'specified':
             if haplotype_chrom is None:
                 raise ValueError('If haplotype_type == "specified", at least haplotype_chrom must be supplied')
             if haplotype_pos is not None:
                 haplotype_pos = int(haplotype_pos)
-                haplotype = self.haplotypes.get_haplotype(haplotype_chrom, haplotype_pos, self.cb_whitelist)
+                haplotype = self.haplotypes.haplotype_to_pandas(haplotype_chrom, haplotype_pos, self.cb_whitelist)
             else:
                 if self.eqtl_results is None:
                     raise ValueError('eqtl_results were not provided')
@@ -229,7 +254,7 @@ class HaplotypeExpressionPlotter:
                     raise ValueError('cannot find best_hit, gene was not tested')
                 best_hit = gene_eqtls.loc[gene_eqtls.lod_score.idxmax()]
                 haplotype_pos = best_hit.pos
-                haplotype = self.haplotypes.get_haplotype(haplotype_chrom, haplotype_pos, self.cb_whitelist)
+                haplotype = self.haplotypes.haplotype_to_pandas(haplotype_chrom, haplotype_pos, self.cb_whitelist)
             label= f'Haplotype at {haplotype_chrom}:{haplotype_pos}'
         haplotype = haplotype.round().map({0: 'Parent 1', 1: 'Parent 2'})
         return haplotype.rename(label)

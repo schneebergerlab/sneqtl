@@ -8,6 +8,7 @@ from scipy import stats
 import pyarrow as pa
 from pyarrow import parquet as pq
 from  pyarrow import dataset as ds
+from pyarrow import compute as pc
 
 from coelsch.main.logger import progress_bar
 from .model.qtl import SinglePhenoQTLAnalysis, SingleGeneResults
@@ -16,7 +17,7 @@ from .memmap import MemmapManager
 
 from sneqtl.variables.base import VariableManager
 from sneqtl.variables.exprs import ExpressionVariables
-from sneqtl.variables.covariates import Covariates
+from sneqtl.variables.covariates import Covariates, CisHaploCovariates
 from sneqtl.variables.interactions import HaplotypeInteractionVariables
 from sneqtl.variables.var_utils import check_aligned
 
@@ -30,9 +31,15 @@ class eQTLResults:
             if e.is_file() and e.name.endswith(".parquet")
         }
 
-        any_file = next(iter(self.gene_ids.values()))
-        self.schema = pq.read_schema(any_file)
-        self.bin_size = int(self.schema.field("pos").metadata[b"bin_size"].decode())
+        try:
+            any_file = next(iter(self.gene_ids.values()))
+            self.schema = pq.read_schema(any_file)
+            self.bin_size = int(
+                self.schema.field("pos").metadata[b"bin_size"].decode()
+            )
+        except StopIteration:
+            self.schema = None
+            self.bin_size = None
 
     @property
     def columns(self):
@@ -51,19 +58,57 @@ class eQTLResults:
         for gene_id in self.gene_ids:
             yield gene_id, self[gene_id]
 
+    def get_haplotype_results(self, chrom, pos):
+        first_file = next(iter(self.gene_ids.values()))
+        pf = pq.ParquetFile(first_file)
+
+        # Find the row group and row within it.
+        for rg in range(pf.num_row_groups):
+            coords = pf.read_row_group(rg, columns=["chrom", "pos"])
+
+            mask = pc.and_(
+                pc.equal(coords["chrom"], chrom),
+                pc.equal(coords["pos"], pos)
+            )
+            idx = pc.indices_nonzero(mask)
+
+            if len(idx):
+                if len(idx) > 1:
+                    raise ValueError(
+                        f"Multiple rows found for chrom={chrom}, pos={pos}"
+                    )
+                row_idx = idx[0].as_py()
+                break
+        else:
+            raise KeyError(f"No row found for chrom={chrom}, pos={pos}")
+
+        return pd.concat(
+            [
+                pq.ParquetFile(path)
+                .read_row_group(rg)
+                .slice(row_idx, 1)
+                .to_pandas()
+                for path in self.gene_ids.values()
+            ],
+            ignore_index=True,
+        )
+
 
 class eQTLAnalysisManager:
 
     def __init__(self, output_dir, expression_variables, haplotypes,
-                 parental_genotypes=None, variants=None,
+                 parental_genotypes=None, variants=None, gene_locs=None,
                  interacting_variables=None, covariates=None,
                  covariate_haplotypes=None,
                  genotype_covariates_as_pcs=False,
+                 control_cis_haplotypes=True,
+                 cis_hap_window_size=250_000,
                  precompute_hap_factors=True,
                  minP_threshold=0.01,
                  n_perm=1000,
                  batch_size=500,
-                 exists_ok=False):
+                 exists_ok=False,
+                 tmpdir=None):
 
         if interacting_variables is None:
             interacting_variables = []
@@ -72,7 +117,7 @@ class eQTLAnalysisManager:
             expression_variables.T, haplotypes, parental_genotypes,
             covariates, *interacting_variables
         )
-        self._mm = MemmapManager(memmap=True)
+        self._mm = MemmapManager(memmap=True, memmap_dir=tmpdir)
         self.batch_size = batch_size
         self.minP_threshold = minP_threshold
         self.n_perm = n_perm
@@ -93,6 +138,21 @@ class eQTLAnalysisManager:
         )
         self.covariates = self._mm.convert(covariates)
 
+        if control_cis_haplotypes:
+            cis_haplo_covariates = CisHaploCovariates.from_haplotypes(
+                haplotype_variables=haplotypes,
+                gene_locs=gene_locs,
+                parental_genotypes=parental_genotypes,
+                variants=variants,
+                window_size=cis_hap_window_size,
+                gene_ids=expression_variables.gene_ids,
+                name='cis_haplo_covariates'
+            )
+            self.cis_haplo_covariates = self._mm.convert(cis_haplo_covariates)
+        else:
+            self.cis_haplo_covariates = None
+        self.control_cis_haplotypes = control_cis_haplotypes
+
         self.bin_size = haplotypes.bin_size
 
         self.haplotype_variables = HaplotypeInteractionVariables.from_cross_product(
@@ -104,7 +164,8 @@ class eQTLAnalysisManager:
             memmap_manager=self._mm,
         )
 
-        if precompute_hap_factors:
+        # if we don't have gene-specific covariates, we can precompute some shared factors
+        if precompute_hap_factors and not control_cis_haplotypes:
             self._precomputed_factors = True
             p = len(self.covariates.variable_names) + len(self.haplotype_variables.variable_names)
             self.L_precomp = self._mm.create_empty(
@@ -183,10 +244,6 @@ class eQTLAnalysisManager:
         )
         return e.test_all_positions(batch_size=self.batch_size)
 
-    @staticmethod
-    def apply_fdr_correction(results, inplace=True):
-        raise ValueError('not implemented')
-
     def run_all_genes(self, processes=1, torch_threads_per_process=1, resume=False):
 
         def _run_gene_parallel(gene_id):
@@ -199,6 +256,11 @@ class eQTLAnalysisManager:
             
             expression_variables = self._mm.load('expression_variables')
             covariates = self._mm.load('covariates')
+            if self.control_cis_haplotypes:
+                cis_haplo_covariates = self._mm.load('cis_haplo_covariates')
+                cis_haplo_covariates = cis_haplo_covariates.get_gene(gene_id)
+            else:
+                cis_haplo_covariates = None
             haplotype_variables = self._mm.load('haplotype_variables')
             if self._precomputed_factors:
                 L_precomp = self._mm.load('L_precomp')
@@ -211,6 +273,7 @@ class eQTLAnalysisManager:
                 haplotype_variables=haplotype_variables,
                 gene_id=gene_id,
                 covariates=covariates,
+                cis_haplo_covariates=cis_haplo_covariates,
                 bonf_correction=len(expression_variables), # control for n genes
                 bin_size=self.bin_size,
                 minP_threshold=self.minP_threshold,

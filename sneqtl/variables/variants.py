@@ -23,13 +23,19 @@ class VariantVariables(VariableManager):
     def haplotypes(self):
         return self.columns
 
-    def get_bin_variants(self, chrom, bidx):
-        idx = [
+    def get_bin_variants(self, chrom, bstart=None, bend=None):
+        if bstart is None:
+            b_range = lambda b: True # any variant on chromosome
+        elif bend is None:
+            b_range = lambda b: b == bstart
+        else:
+            b_range = lambda b: (b >= bstart) and (b < bend)
+        reindex_ids = [
             (c, b, pos)
             for c, b, pos in self.index
-            if c == chrom and b == bidx
+            if c == chrom and b_range(b)
         ]
-        return self.__class__(self.loc[idx], index=idx, columns=self.columns)
+        return self.reindex(index=reindex_ids)
 
     def filter_minor_allele(self, parental_genotypes, haplotype_variables, min_frac=0.05, min_abs=100):
         n_barcodes = parental_genotypes._hap1.shape[0]

@@ -56,6 +56,15 @@ class HaplotypeVariables(VariableManager):
         haplotype_variables.bin_size = bin_size
         return haplotype_variables
 
+    def get_mean_haplotype(self, chrom, start, end):
+        chrom_positions = [p for c, p in self.columns if c == chrom]
+        use_positions = [
+            p for p in chrom_positions
+            if (start <= p) and (p < end)
+        ]
+        hap_slice = self.loc[:, [(chrom, p) for p in use_positions]]
+        return hap_slice.mean(axis=1)
+
     def _get_closest_haplotype(self, chrom, pos):
         chrom_positions = [p for c, p in self.columns if c == chrom]
         pos_idx = np.searchsorted(chrom_positions, pos, side='right') - 1

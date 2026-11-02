@@ -98,6 +98,7 @@ def call_eqtl_peaks_gene(gene_eqtl_results, lod_var='lod_score', pval_var='lrt_p
 
 def call_eqtl_peaks(eqtl_results, gene_locs, peak_variable='overall', cis_range=5e5, **kwargs):
     lod_threshold = kwargs.get('lod_threshold', 5)
+    snps = kwargs.get('snps', False)
     if peak_variable == 'overall':
         lod_var = 'lod_score'
         pval_var = 'lrt_pval'
@@ -143,7 +144,7 @@ def call_eqtl_peaks(eqtl_results, gene_locs, peak_variable='overall', cis_range=
         'chrom_eqtl', 'pos_eqtl', 'left_ci_eqtl', 'right_ci_eqtl',
         'gene_id', 'chrom_gene', 'pos_gene', 'eqtl_type',
         'lod_score', 'lrt_pval',
-        *eqtl_results.schema.names[5:]
+        *eqtl_results.schema.names[6 if snps else 5:]
     ]
     if kwargs['snps']:
         columns.insert(4, 'snp_id')

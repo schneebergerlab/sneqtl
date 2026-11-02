@@ -12,6 +12,7 @@ from sneqtl.variables.pca import PrincipalComponents
 from sneqtl.variables.celltypes import CellTypes
 from sneqtl.variables.var_utils import concat
 from sneqtl.io.misc import read_cb_stats
+from sneqtl.io.gtf import read_gtf_gene_locs
 from .analysis import eQTLAnalysisManager
 
 
@@ -25,11 +26,12 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
              model_parental_genotype=False, reference_genotype=None,
              min_cells_per_geno=100, variant_maf=0.05, genotype_covariates_as_pcs=False,
              celltype_haplotype_interaction=False, celltype_n_clusters=None,
-             covariate_haplotypes=None, cb_filter_exprs=None, minP_threshold=0.01, n_perm=1000, 
+             control_cis_haplotypes=True, cis_hap_window_size=250_000, covariate_haplotypes=None,
+             cb_filter_exprs=None, minP_threshold=0.01, n_perm=1000, 
              run_peakcall=True, lod_threshold=5, rel_lod_threshold=0.1,
              rel_prominence=0.25, ci_lod_drop=1.5,
              min_dist_between_eqtls=3e6, cis_eqtl_range=5e5,
-             processes=1, torch_threads_per_process=1, resume=False, rng=DEFAULT_RNG):
+             processes=1, torch_threads_per_process=1, resume=False, rng=DEFAULT_RNG, tmpdir=None):
 
     output_dir = f'{output_prefix}.eqtls'
 
@@ -150,6 +152,13 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
         log.info('No parental (diploid) genotypes provided. Genotypes are assumed to be the same for all nuclei')
         parental_genotypes = None
 
+    if control_cis_haplotypes:
+        if gtf_fn is None:
+            raise ValueError('gtf_fn must be provided when controlling for cis haplotypes')
+        gene_locs = read_gtf_gene_locs(gtf_fn)
+    else:
+        gene_locs = None
+
     interacting_variables = [celltype_clusters,] if celltype_clusters is not None else None
 
     e = eQTLAnalysisManager(
@@ -158,15 +167,21 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
         haplotypes=haplotypes,
         parental_genotypes=parental_genotypes,
         variants=variants,
+        gene_locs=gene_locs,
         interacting_variables=interacting_variables,
         covariates=covariates,
         covariate_haplotypes=covariate_haplotypes,
+        control_cis_haplotypes=control_cis_haplotypes,
+        cis_hap_window_size=cis_hap_window_size,
         genotype_covariates_as_pcs=genotype_covariates_as_pcs,
         minP_threshold=minP_threshold,
         n_perm=n_perm,
         exists_ok=resume,
+        tmpdir=tmpdir,
     )
     covar_names = e.covariates.variable_names
+    if e.control_cis_haplotypes:
+        covar_names += e.cis_haplo_covariates.variable_names
     haplo_var_names = e.haplotype_variable_names
     log.debug(f'Controlling for {len(covar_names)} covariates: {covar_names}')
     log.debug(f'{len(haplo_var_names)} haplotype-associated variables will be tested: {haplo_var_names}')

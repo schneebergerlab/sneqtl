@@ -2,7 +2,7 @@ import itertools as it
 from functools import cached_property
 import numpy as np
 
-from coelsch.load.genotype import GenotypeKey
+from coelsch.experiment.genotypes import GenotypeKey
 from .base import VariableManager
 from .pca import PrincipalComponents
 from .arr_utils import get_dummies
@@ -33,7 +33,7 @@ class ParentalGenotypesContainer:
         return self._hap1.columns
 
     def as_covariates(self, variants=None, as_pcs=False,
-                      min_var_explained=0.01, max_pcs=10,
+                      min_var_explained=0.01, max_pcs=None,
                       rng=DEFAULT_RNG):
         if not as_pcs:
             haploid_genotypes = VariableManager(
@@ -42,16 +42,16 @@ class ParentalGenotypesContainer:
                 columns=self._hap1.columns,
             ).drop_uninformative(axis=1)
             haploid_genotypes = haploid_genotypes.drop(columns=[self._ref_geno])
-            haploid_genotypes = haploid_genotypes.drop_rank_dependent()
-            return haploid_genotypes
+            covars = haploid_genotypes.drop_rank_dependent()
         else:
-            return PrincipalComponents.from_variants(
+            covars = PrincipalComponents.from_variants(
                 variants, self,
                 min_var_explained=min_var_explained,
                 max_pcs=max_pcs,
             )
+        return covars
 
-    def get_haplotype_variables(self, haplotype, variants=None):
+    def get_haplotype_variables(self, haplotype, variants=None, drop_ref=True):
         haplotype = haplotype.reshape(-1, 1)
         if variants is None:
             hap1_vars = self._hap1._data * (1 - haplotype)
@@ -64,9 +64,8 @@ class ParentalGenotypesContainer:
                 index=self._hap1.index,
                 columns=columns
             )
-            # remove low variance features
-            hap_vars = hap_vars.drop_uninformative(axis=1)
-            hap_vars = hap_vars.drop(columns=[f'haplo_{self._ref_geno}'])
+            if drop_ref:
+                hap_vars = hap_vars.drop(columns=[f'haplo_{self._ref_geno}'])
         else:
             hap1_vars = (variants._data @ self._hap1._data.T) * (1 - haplotype.T)
             hap2_vars = (variants._data @ self._hap2._data.T) * haplotype.T
@@ -105,6 +104,6 @@ class ParentalGenotypesContainer:
         return cls(hap1=hap1, hap2=hap2, reference_genotype=reference_genotype)
 
     def reindex(self, index=None, columns=None):
-        hap1 = self.hap1.reindex(index, columns)
-        hap2 = self.hap2.reindex(index, columns)
+        hap1 = self._hap1.reindex(index, columns)
+        hap2 = self._hap2.reindex(index, columns)
         return self.__class__(hap1, hap2)
