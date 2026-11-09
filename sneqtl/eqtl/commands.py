@@ -2,6 +2,7 @@ from logging import getLogger
 import numpy as np
 
 from coelsch.records import PredictionRecords
+from coelsch.experiment.genotypes import GenotypeKey
 from coelsch.defaults import DEFAULT_RANDOM_SEED
 
 from sneqtl.variables.base import VariableManager
@@ -40,7 +41,14 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
     haploid_records = PredictionRecords.read_json(haplo_json_fn)
     if 'genotypes' not in haploid_records.metadata:
         raise ValueError('PredictionRecords object must contain a "genotypes" metadata slot')
-    parental_genotypes = dict(haploid_records.metadata['genotypes'])
+
+    def _strip_geno_name(geno_str):
+        return geno_str.split(':', maxsplit=1)[-1]
+
+    parental_genotypes = {
+        cb: GenotypeKey.from_str(_strip_geno_name(g))
+        for cb, g in haploid_records.metadata['genotypes'].items()
+    }
 
     if cb_stats_fn is not None:
         cb_stats = read_cb_stats(cb_stats_fn, cb_filter_exprs)
@@ -54,12 +62,12 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
         }
     else:
         cb_stats = None
-        cb_whitelist = None
+        cb_whitelist = haploid_records.barcodes
 
     n_geno = len(set(parental_genotypes.values()))
-    if model_parental_genotype and n_geno == 1:
+    if control_parental_genotype and n_geno == 1:
         log.warn('All parental (diploid) genotypes are the same. Genotype will not be modelled')
-        model_parental_genotype = False
+        control_parental_genotype = False
     else:
         log.info(f'There are {n_geno} parental (diploid) genotypes to be tested')
 
@@ -80,6 +88,8 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
 
     if diploid_json_fn is not None:
         diploid_records = PredictionRecords.read_json(diploid_json_fn)
+    else:
+        diploid_records = None
     haplotypes = HaplotypeVariables.from_prediction_records(haploid_records, diploid_records, cb_whitelist)
     log.info(f'Read haplotype information in {haplotypes.bin_size/1e3:.0f} kb bins')
     log.info(f'There are {len(haplotypes.chroms)} chromosomes and '
@@ -91,12 +101,12 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
         )
         expression_variables = expression_variables.reindex(columns=cb_whitelist)
         haplotypes = haplotypes.reindex(index=cb_whitelist)
-        parental_genotypes.reindex(index=cb_whitelist)
-        cb_stats = cb_stats.reindex(index=cb_whitelist)
+        parental_genotypes = parental_genotypes.reindex(index=cb_whitelist)
+        if cb_stats is not None:
+            cb_stats = cb_stats.reindex(index=cb_whitelist)
         assert expression_variables.barcodes == haplotypes.barcodes
-    else:
-        cb_whitelist = list(expression_variables.barcodes)
-    if cb_stats.columns.str.startswith('pc_').any():
+
+    if cb_stats is not None and cb_stats.columns.str.startswith('pc_').any():
         pc = cb_stats.loc[:, cb_stats.columns.str.startswith('pc_')]
         pc.columns = pc.columns.str[3:]
         log.info(f'Using {len(pc.columns)} predetermined principal components from stats file')
@@ -114,7 +124,7 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
         log.info('After filtering for PCs correlated with haplotypes, '
                  f'{principal_components.columns} will be used as covariates')
     if celltype_haplotype_interaction:
-        if cb_stats.columns.str.startswith('ct_').any():
+        if cb_stats is not None and cb_stats.columns.str.startswith('ct_').any():
             ct = cb_stats.loc[:, cb_stats.columns.str.startswith('ct_')]
             ct.columns = ct.columns.str[3:]
             log.info(f'Using {len(ct.columns)} predetermined celltypes from stats file')
