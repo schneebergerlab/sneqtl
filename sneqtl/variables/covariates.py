@@ -71,9 +71,9 @@ class Covariates(VariableManager):
 
     @classmethod
     def null_covariates(cls, variables, dtype=np.float32, name=None):
-        n_obs = variables.shape[0]
-        intercept = np.ones((n_obs, 1), dtype=dtype)
-        return cls(intercept, index=variables.index, columns=['const',], name=name)
+        barcodes = variables.barcodes
+        intercept = np.ones((len(barcodes), 1), dtype=dtype)
+        return cls(intercept, index=barcodes, columns=['const'], name=name)
 
 
 class CisHaploCovariates(VariableManager):

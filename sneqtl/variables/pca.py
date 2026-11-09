@@ -88,11 +88,17 @@ class PrincipalComponents(VariableManager):
             axis=0,
             return_inverse=True
         )
+        if len(design) < 2:
+            raise ValueError(
+                "No variation in parental founder dosages; "
+                "variant-based PCA cannot be performed. "
+                "(Note that reciprocal crosses are equivalent here)"
+            )
         parental_variants = design @ variants._data.T
-        if max_pcs is None:
-            max_pcs = len(design) - 1
-        else:
-            max_pcs = min(max_pcs, len(design) - 1)
+        max_pcs = min(
+            max_pcs if max_pcs is not None else len(design) - 1,
+            min(parental_variants.shape) - 1,
+        )
         pca = PCA(n_components=max_pcs, svd_solver='arpack', random_state=random_state)
         pca = pca.fit(parental_variants)
         principal_components = pca.transform(parental_variants)

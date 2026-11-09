@@ -45,7 +45,7 @@ def _get_params(covariates, haplo_variables, haplo_variables_alt):
     n, n_cov, n_hap, n_hvars, n_hvars_alt, df_resid, df_resid_alt : int or None
         Extracted model parameters.
     """
-    n, n_hap, n_hvars = haplo_variables.shape
+    n_hap, n, n_hvars = haplo_variables.shape
     n_cov = covariates.shape[1]
     df_resid = n - (n_cov + n_hvars)
     if haplo_variables_alt is not None:
@@ -220,9 +220,9 @@ def precompute_var_covar_cholesky(covariates, haplo_variables, *, haplo_variable
     ----------
     covariates : array-like, shape (n, n_cov)
         Covariate design matrix.
-    haplo_variables : array-like, shape (n, n_hap, n_hvars)
+    haplo_variables : array-like, shape (n_hap, n, n_hvars)
         Main haplotype design tensor.
-    haplo_variables_alt : array-like, shape (n, n_hap, n_hvars_alt), optional
+    haplo_variables_alt : array-like, shape (n_hap, n, n_hvars_alt), optional
         Alternative haplotype design tensor.
     L_out : ndarray-like, optional
         Output array or memmap for main-model Cholesky factors with shape
@@ -269,14 +269,14 @@ def precompute_var_covar_cholesky(covariates, haplo_variables, *, haplo_variable
 
     for start in range(0, n_hap, batch_size):
         end = min(start + batch_size, n_hap)
-        hb = _as_tensors(haplo_variables[:, start:end, :]).permute(1, 2, 0)
+        hb = _as_tensors(haplo_variables[start:end, :, :]).transpose(1, 2)
         L_batch = _compute_var_covar_cholesky(covariates, hb, ctc)
         diag_batch = _diag_inv(L_batch)
         L_out[start:end, :, :] = L_batch.cpu().numpy()
         diag_out[start:end, :] = diag_batch.cpu().numpy()
         if haplo_variables_alt is not None:
-            hb_alt = _as_tensors(haplo_variables_alt[:, start:end, :])
-            hb_alt = hb_alt.permute(1, 2, 0)
+            hb_alt = _as_tensors(haplo_variables_alt[start:end, :, :])
+            hb_alt = hb_alt.transpose(1, 2)
             L_batch_alt = _compute_var_covar_cholesky(covariates, hb_alt, ctc)
             diag_batch_alt = _diag_inv(L_batch_alt)
             L_out_alt[start:end, :, :] = L_batch_alt.cpu().numpy()
@@ -369,7 +369,7 @@ def _fit_batch(*, y_perms, covariates, hap, ctc, cty_perms, yty_perms, df_resid,
         Observed phenotype in column 0 and permuted phenotypes in later columns.
     covariates : torch.Tensor, shape (n, n_cov)
         Covariate design matrix.
-    hap : torch.Tensor, shape (n, bsz, n_hvars)
+    hap : torch.Tensor, shape (bsz, n, n_hvars)
         Haplotype variables for the current batch of loci.
     ctc : torch.Tensor, shape (n_cov, n_cov)
         Precomputed covariates.T @ covariates.
@@ -395,11 +395,11 @@ def _fit_batch(*, y_perms, covariates, hap, ctc, cty_perms, yty_perms, df_resid,
     param_pvals : torch.Tensor, shape (bsz, n_hvars, n_perm + 1)
         Parameter-level two-sided Wald p-values.
     """
-    n, bsz, n_hvars = hap.shape
+    bsz, n, n_hvars = hap.shape
     n_cov = covariates.shape[1]
     p = n_cov + n_hvars
 
-    hb = hap.permute(1, 2, 0)  # (bsz, n_hvars, n)
+    hb = hap.transpose(1, 2)  # (bsz, n_hvars, n)
     hty = hb @ y_perms                           # (bsz, n_hvars, n_perms + 1)
     Xty = torch.cat([hty, cty_perms.unsqueeze(0).expand(bsz, -1, -1)], dim=1)  # (bsz, p)
 
@@ -444,9 +444,9 @@ def _process_batch(hap_idx, haplo_variables, haplo_variables_alt, *,
     ----------
     hap_idx : slice
         Slice selecting the loci in the current batch.
-    haplo_variables : array-like, shape (n, n_hap, n_hvars)
+    haplo_variables : array-like, shape (n_hap, n, n_hvars)
         Main haplotype design tensor.
-    haplo_variables_alt : array-like, shape (n, n_hap, n_hvars_alt), optional
+    haplo_variables_alt : array-like, shape (n_hap, n, n_hvars_alt), optional
         Alternative haplotype design tensor.
     ll_nest : torch.Tensor
         Log-likelihood of the reduced model for the observed and permuted
@@ -489,8 +489,8 @@ def _process_batch(hap_idx, haplo_variables, haplo_variables_alt, *,
     param_pvals_alt : torch.Tensor or None
         Parameter-level Wald p-values for the alternative model.
     """
-    n, _, n_hvars = haplo_variables.shape
-    hap_batch = _as_tensors(haplo_variables[:, hap_idx, :])
+    _, n, n_hvars = haplo_variables.shape
+    hap_batch = _as_tensors(haplo_variables[hap_idx, :, :])
     if L_precomp is not None:
         L_precomp_batch = _as_tensors(L_precomp[hap_idx, :])
     else:
@@ -511,7 +511,7 @@ def _process_batch(hap_idx, haplo_variables, haplo_variables_alt, *,
 
     if haplo_variables_alt is not None:
         *_, n_hvars_alt = haplo_variables_alt.shape
-        hap_alt = _as_tensors(haplo_variables_alt[:, hap_idx, :])
+        hap_alt = _as_tensors(haplo_variables_alt[hap_idx, :, :])
         if L_precomp_alt is not None:
             L_precomp_alt_batch = _as_tensors(L_precomp_alt[hap_idx, :])
         else:
@@ -628,9 +628,9 @@ def fit_models(y, covariates, haplo_variables, *, haplo_variables_alt=None, batc
         Observed phenotype vector.
     covariates : array-like, shape (n, n_cov)
         Covariate design matrix.
-    haplo_variables : array-like, shape (n, n_hap, n_hvars)
+    haplo_variables : array-like, shape (n_hap, n, n_hvars)
         Main haplotype design tensor.
-    haplo_variables_alt : array-like, shape (n, n_hap, n_hvars_alt), optional
+    haplo_variables_alt : array-like, shape (n_hap, n, n_hvars_alt), optional
         Alternative haplotype design tensor.
     batch_size : int, optional
         Number of loci to process at once.
