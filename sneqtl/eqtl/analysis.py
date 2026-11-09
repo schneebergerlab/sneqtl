@@ -295,7 +295,7 @@ class eQTLAnalysisManager:
                 cis_haplo_covariates=cis_haplo_covariates,
                 bonf_correction=len(expression_variables), # control for n genes
                 bin_size=self.bin_size,
-                n_perm=self.n_perm
+                n_perm=self.n_perm,
                 minP_threshold=self.minP_threshold,
                 L_precomp=L_precomp,
                 diag_precomp=diag_precomp,

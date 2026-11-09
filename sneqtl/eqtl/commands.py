@@ -109,7 +109,6 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
 
     pca_calc_required = control_principal_components
     ct_calc_required = celltype_haplotype_interaction
-    covariates = None
     celltype_clusters = None
 
     if cb_stats is not None:
@@ -138,16 +137,8 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
         )
         log.info(f'Identified {principal_components.shape[1]} principal components '
                  f'explaining {principal_components.var_explained * 100:.1f}% of variance')
-        principal_components = principal_components.filter_correlated(haplotypes, max_r2=0.05)
 
-        if control_principal_components:
-            log.info('After filtering for PCs correlated with haplotypes, '
-                     f'{principal_components.columns} will be used as covariates')
-            covariates = principal_components
-        else:
-            covariates = None
-
-        if celltype_haplotype_interaction:
+        if ct_calc_required:
             celltype_clusters = CellTypes.from_principal_components(
                 principal_components,
                 n_clusters=celltype_n_clusters,
@@ -155,8 +146,14 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
             )
             log.info(f'Identified {celltype_clusters.shape[1]} cell type clusters')
             log.debug(celltype_clusters.celltype_counts)
-        else:
-            celltype_clusters = None
+
+    principal_components = principal_components.filter_correlated(haplotypes, max_r2=0.05)
+    if control_principal_components:
+        log.info('After filtering for PCs correlated with haplotypes, '
+                 f'{principal_components.columns} will be used as covariates')
+        covariates = principal_components
+    else:
+        covariates = None
 
     if covar_names is not None and cb_stats is not None:
         extra_covars = (VariableManager.from_dataframe(cb_stats.loc[cb_whitelist, covar_names])
