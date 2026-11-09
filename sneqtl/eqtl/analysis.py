@@ -138,6 +138,14 @@ class eQTLAnalysisManager:
             name='covariates',
             barcodes=haplotypes.barcodes,
         )
+
+        HaplotypeInteractionVariables.validate_design(
+            parental_genotypes=parental_genotypes,
+            covariates=covariates,
+            interacting_variables=interacting_variables,
+            variant_mode=variants is not None,
+        )
+
         self.covariates = self._mm.convert(covariates)
 
         if control_cis_haplotypes:

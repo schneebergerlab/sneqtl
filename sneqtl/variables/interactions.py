@@ -25,6 +25,35 @@ class HaplotypeInteractionVariables(VariableManager):
         for hap, i in self._index_map.items():
             yield hap, self._data[i, :, ...]
 
+    @staticmethod
+    def validate_design(parental_genotypes, covariates,
+                        interacting_variables=None):
+
+        channel_indices = parental_genotypes._channel_indices
+        n_barcodes, n_channels = channel_indices.shape
+
+        # Enumerate every possible inherited founder for each barcode.
+        rows = np.repeat(np.arange(n_barcodes), n_channels)
+        founders = channel_indices.ravel()
+
+        nonref = [
+            i for i, founder in enumerate(parental_genotypes.columns)
+            if founder != parental_genotypes._ref_geno
+        ]
+
+        H = (founders[:, None] == np.array(nonref)).astype(np.float64)
+
+        # Apply the actual interaction structure.
+        for iv in interacting_variables or []:
+            H = np.einsum(
+                'ij,ik->ijk', H, iv._data[rows]
+            ).reshape(len(rows), -1)
+
+        X = np.column_stack([covariates._data[rows], H])
+
+        if X.shape[1] > n_barcodes or np.linalg.matrix_rank(X) < X.shape[1]:
+            raise ValueError('Model design is structurally rank-deficient')
+
     @classmethod
     def from_cross_product(cls, haplotype_variables,
                            parental_genotypes, variant_variables=None, interacting_variables=None,
