@@ -101,17 +101,34 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
         )
         expression_variables = expression_variables.reindex(columns=cb_whitelist)
         haplotypes = haplotypes.reindex(index=cb_whitelist)
-        parental_genotypes = parental_genotypes.reindex(index=cb_whitelist)
         if cb_stats is not None:
             cb_stats = cb_stats.reindex(index=cb_whitelist)
         assert expression_variables.barcodes == haplotypes.barcodes
 
-    if cb_stats is not None and cb_stats.columns.str.startswith('pc_').any():
-        pc = cb_stats.loc[:, cb_stats.columns.str.startswith('pc_')]
-        pc.columns = pc.columns.str[3:]
-        log.info(f'Using {len(pc.columns)} predetermined principal components from stats file')
-        principal_components = PrincipalComponents.from_dataframe(pc)
-    else:
+    parental_genotypes = parental_genotypes.reindex(index=cb_whitelist)
+
+    pca_calc_required = control_principal_components
+    ct_calc_required = celltype_haplotype_interaction
+
+    if cb_stats is not None:
+
+        if control_principal_components and cb_stats.columns.str.startswith('pc_').any():
+            pc = cb_stats.loc[:, cb_stats.columns.str.startswith('pc_')]
+            pc.columns = pc.columns.str[3:]
+            log.info(f'Using {len(pc.columns)} predetermined principal components from stats file')
+            principal_components = PrincipalComponents.from_dataframe(pc)
+            pca_calc_required = False
+
+        if celltype_haplotype_interaction and cb_stats.columns.str.startswith('ct_').any():
+            ct = cb_stats.loc[:, cb_stats.columns.str.startswith('ct_')]
+            ct.columns = ct.columns.str[3:]
+            log.info(f'Using {len(ct.columns)} predetermined celltypes from stats file')
+            celltype_clusters = CellTypes.from_dataframe(ct)
+            log.debug(celltype_clusters.celltype_counts)
+            ct_calc_required = False
+
+    elif pca_calc_required or ct_calc_required:
+
         principal_components = PrincipalComponents.from_expression(
             expression_variables,
             min_var_explained=min_pc_var_explained,
@@ -119,18 +136,16 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
         )
         log.info(f'Identified {principal_components.shape[1]} principal components '
                  f'explaining {principal_components.var_explained * 100:.1f}% of variance')
-    principal_components = principal_components.filter_correlated(haplotypes, max_r2=0.05)
-    if control_principal_components:
-        log.info('After filtering for PCs correlated with haplotypes, '
-                 f'{principal_components.columns} will be used as covariates')
-    if celltype_haplotype_interaction:
-        if cb_stats is not None and cb_stats.columns.str.startswith('ct_').any():
-            ct = cb_stats.loc[:, cb_stats.columns.str.startswith('ct_')]
-            ct.columns = ct.columns.str[3:]
-            log.info(f'Using {len(ct.columns)} predetermined celltypes from stats file')
-            celltype_clusters = CellTypes.from_dataframe(ct)
-            log.debug(celltype_clusters.celltype_counts)
+        principal_components = principal_components.filter_correlated(haplotypes, max_r2=0.05)
+
+        if control_principal_components:
+            log.info('After filtering for PCs correlated with haplotypes, '
+                     f'{principal_components.columns} will be used as covariates')
+            covariates = principal_components
         else:
+            covariates = None
+
+        if celltype_haplotype_interaction:
             celltype_clusters = CellTypes.from_principal_components(
                 principal_components,
                 n_clusters=celltype_n_clusters,
@@ -138,13 +153,8 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
             )
             log.info(f'Identified {celltype_clusters.shape[1]} cell type clusters')
             log.debug(celltype_clusters.celltype_counts)
-    else:
-        celltype_clusters = None
-
-    if control_principal_components:
-        covariates = principal_components
-    else:
-        covariates = None
+        else:
+            celltype_clusters = None
 
     if covar_names is not None and cb_stats is not None:
         extra_covars = (VariableManager.from_dataframe(cb_stats.loc[cb_whitelist, covar_names])

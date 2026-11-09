@@ -162,7 +162,7 @@ class CisHaploCovariates(VariableManager):
                 variants=None
             )._data
 
-            if variants is None:
+            if variants is not None:
                 local_variants = variants.get_bin_variants(chrom, win_start, win_end)
                 # if there are fewer variants than haplotypes, fallback to controlling by haplotype
                 if len(local_variants) > n_pcs:
@@ -174,8 +174,12 @@ class CisHaploCovariates(VariableManager):
                 else:
                     if chrom not in chrom_level_pcs:
                         # use chromosome level variants instead of local variants
-                        local_variants = variants.get_bin_variants(chrom)
-                        pcs = PrincipalComponents.from_local_variants(local_variants, n_pcs)
+                        chrom_variants = variants.get_bin_variants(chrom)
+                        if len(chrom_variants) <= n_pcs:
+                            raise ValueError(
+                                'Insufficient variation to calculate cis-haplotype principal components'
+                            )
+                        pcs = PrincipalComponents.from_local_variants(chrom_variants, n_pcs)
                         pcs = pcs.drop(index=[parental_genotypes._ref_geno])._data
                         chrom_level_pcs[chrom] = pcs
                     win_cis_hap = win_cis_hap @ chrom_level_pcs[chrom]

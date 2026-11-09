@@ -125,6 +125,13 @@ sneqtl_opts.option(
     help='VCF file name (activates GWAS mode!!)'
 )
 
+sneqtl_opts.option(
+    '--diploid-json-fn',
+    subcommands=['eqtl'],
+    required=False,
+    type=_input_file_type,
+    help='A coelsch prediction records json containing parental recombinant genotypes' # TODO clearer docstring
+)
 
 def _validate_bam_tag(ctx, param, value):
     if not len(value) == 2:
@@ -276,11 +283,11 @@ sneqtl_opts.option(
 
 
 sneqtl_opts.option(
-    '--genotype/--no-genotype', 'model_parental_genotype',
+    '--control-genotype/--no-genotype', 'control_parental_genotype',
     subcommands=['eqtl'],
     required=False,
     default=False,
-    help='whether to model parental (diploid) genotype'
+    help='whether to control for parental (diploid) genotype'
 )
 
 
@@ -289,7 +296,7 @@ sneqtl_opts.option(
     subcommands=['eqtl'],
     required=False,
     default=None,
-    help='which genotype to use as a reference (to be dropped in the model)'
+    help='which founder genotype to use as a reference (to be dropped in the model)'
 )
 
 
@@ -360,6 +367,16 @@ sneqtl_opts.option(
     help=('number of clusters to use for celltype clustering. '
           'default is to automatically choose best number using silhouette scoring')
 )
+
+
+def _parse_covar_haplotypes(ctx, param, value):
+    if value is not None:
+        parsed = []
+        for locus in value.strip().split(','):
+            chrom, pos = locus.split(':')
+            pos = int(pos)
+            parsed.append((chrom, pos))
+    return parsed
 
 
 sneqtl_opts.option(
