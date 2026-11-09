@@ -37,43 +37,43 @@ class VariantVariables(VariableManager):
         ]
         return self.reindex(index=reindex_ids)
 
-def filter_minor_allele(self, parental_genotypes, haplotype_variables,
-                        min_frac=0.05, min_abs=100):
+    def filter_minor_allele(self, parental_genotypes, haplotype_variables,
+                            min_frac=0.05, min_abs=100):
 
-    if haplotype_variables.index != parental_genotypes.index:
-        raise ValueError("Barcode indexes do not match")
+        if haplotype_variables.index != parental_genotypes.index:
+            raise ValueError("Barcode indexes do not match")
 
-    n_barcodes = len(haplotype_variables.index)
-    reindex_ids = []
+        n_barcodes = len(haplotype_variables.index)
+        reindex_ids = []
 
-    for chrom, pos in haplotype_variables.columns:
-        hap = haplotype_variables[(chrom, pos)]
-        bin_variants = self.get_bin_variants(chrom, pos)
+        for chrom, pos in haplotype_variables.columns:
+            hap = haplotype_variables[(chrom, pos)]
+            bin_variants = self.get_bin_variants(chrom, pos)
 
-        if not bin_variants.index:
-            continue
+            if not bin_variants.index:
+                continue
 
-        # Shape: (n_variants, n_barcodes, 1)
-        variant_probs = parental_genotypes.get_haplotype_variables(
-            hap, variants=bin_variants
-        )._data[..., 0]
+            # Shape: (n_variants, n_barcodes, 1)
+            variant_probs = parental_genotypes.get_haplotype_variables(
+                hap, variants=bin_variants
+            )._data[..., 0]
 
-        # Expected alternate-allele counts across pollen nuclei.
-        alt_counts = variant_probs.sum(axis=1)
-        minor_counts = np.minimum(alt_counts, n_barcodes - alt_counts)
+            # Expected alternate-allele counts across pollen nuclei.
+            alt_counts = variant_probs.sum(axis=1)
+            minor_counts = np.minimum(alt_counts, n_barcodes - alt_counts)
 
-        keep = (
-            (minor_counts >= min_abs)
-            & (minor_counts / n_barcodes >= min_frac)
-        )
+            keep = (
+                (minor_counts >= min_abs)
+                & (minor_counts / n_barcodes >= min_frac)
+            )
 
-        reindex_ids.extend(
-            variant_id
-            for variant_id, valid in zip(bin_variants.index, keep)
-            if valid
-        )
+            reindex_ids.extend(
+                variant_id
+                for variant_id, valid in zip(bin_variants.index, keep)
+                if valid
+            )
 
-    return self.reindex(index=reindex_ids)
+        return self.reindex(index=reindex_ids)
 
     @classmethod
     def read_vcf(cls, vcf_fn, bin_size, reference_name, use_haplotypes=None):

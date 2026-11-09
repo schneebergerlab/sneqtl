@@ -1,6 +1,7 @@
 from logging import getLogger
 import numpy as np
 
+from coelsch.records import PredictionRecords
 from coelsch.defaults import DEFAULT_RANDOM_SEED
 
 from sneqtl.variables.base import VariableManager
@@ -20,10 +21,11 @@ DEFAULT_RNG = np.random.default_rng(DEFAULT_RANDOM_SEED)
 log = getLogger('sneqtl')
 
 
-def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=None, vcf_fn=None,
+def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
+             diploid_json_fn=None, gtf_fn=None, vcf_fn=None,
              rel_min_cells_exprs=0.02, abs_min_cells_exprs=100,
              control_principal_components=True, min_pc_var_explained=0.01, covar_names=None,
-             model_parental_genotype=False, reference_genotype=None,
+             control_parental_genotype=False, reference_genotype=None,
              min_cells_per_geno=100, variant_maf=0.05, genotype_covariates_as_pcs=False,
              celltype_haplotype_interaction=False, celltype_n_clusters=None,
              control_cis_haplotypes=True, cis_hap_window_size=250_000, covariate_haplotypes=None,
@@ -35,15 +37,36 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
 
     output_dir = f'{output_prefix}.eqtls'
 
+    haploid_records = PredictionRecords.read_json(haplo_json_fn)
+    if 'genotypes' not in haploid_records.metadata:
+        raise ValueError('PredictionRecords object must contain a "genotypes" metadata slot')
+    parental_genotypes = dict(haploid_records.metadata['genotypes'])
+
     if cb_stats_fn is not None:
         cb_stats = read_cb_stats(cb_stats_fn, cb_filter_exprs)
-        if model_parental_genotype and min_cells_per_geno:
-            cb_stats = cb_stats.groupby('geno_pred').filter(lambda g: len(g) >= min_cells_per_geno)
+        if control_parental_genotype and min_cells_per_geno:
+            cb_stats = cb_stats.groupby(parental_genotypes).filter(lambda g: len(g) >= min_cells_per_geno)
         cb_whitelist = cb_stats.index.tolist()
         log.info(f'Read {len(cb_whitelist)} barcodes')
+        parental_genotypes = {
+            cb: geno for cb, geno in parental_genotypes.items()
+            if cb in cb_whitelist
+        }
     else:
         cb_stats = None
         cb_whitelist = None
+
+    n_geno = len(set(parental_genotypes.values()))
+    if model_parental_genotype and n_geno == 1:
+        log.warn('All parental (diploid) genotypes are the same. Genotype will not be modelled')
+        model_parental_genotype = False
+    else:
+        log.info(f'There are {n_geno} parental (diploid) genotypes to be tested')
+
+    parental_genotypes = ParentalGenotypesContainer.from_genotype_dict(
+        parental_genotypes, reference_genotype=reference_genotype
+    )
+
     expression_variables = ExpressionVariables.read_matrix_market(exprs_mat_dir)
     if cb_whitelist is not None:
         expression_variables = expression_variables.reindex(columns=cb_whitelist)
@@ -55,7 +78,9 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
     )
     log.info(f'Identified {len(expression_variables)} genes to be tested')
 
-    haplotypes = HaplotypeVariables.read_prediction_records(haplo_json_fn, cb_whitelist)
+    if diploid_json_fn is not None:
+        diploid_records = PredictionRecords.read_json(diploid_json_fn)
+    haplotypes = HaplotypeVariables.from_prediction_records(haploid_records, diploid_records, cb_whitelist)
     log.info(f'Read haplotype information in {haplotypes.bin_size/1e3:.0f} kb bins')
     log.info(f'There are {len(haplotypes.chroms)} chromosomes and '
              f'{len(haplotypes.columns)} bins to be tested')
@@ -66,6 +91,7 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
         )
         expression_variables = expression_variables.reindex(columns=cb_whitelist)
         haplotypes = haplotypes.reindex(index=cb_whitelist)
+        parental_genotypes.reindex(index=cb_whitelist)
         cb_stats = cb_stats.reindex(index=cb_whitelist)
         assert expression_variables.barcodes == haplotypes.barcodes
     else:
@@ -119,38 +145,22 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
             covariates = concat(principal_components, extra_covars, axis=1)
 
     variants = None
-    if model_parental_genotype and cb_stats is not None:
-        parental_genotypes = cb_stats['geno_pred'].to_dict()
-        # TODO: fails for nans...
-        n_geno = len(set(parental_genotypes.values()))
-        if n_geno == 1:
-            log.warn('All parental (diploid) genotypes are the same. Genotype will not be modelled')
-            parental_genotypes = None
-        else:
-            log.info(f'There are {n_geno} parental (diploid) genotypes to be tested')
-            parental_genotypes = ParentalGenotypesContainer.from_genotype_dict(
-                parental_genotypes, reference_genotype=reference_genotype)
 
-            if vcf_fn is not None:
-                if reference_genotype is None:
-                    raise ValueError('If a VCF file is provided, the reference genotype name must also be provided')
-                variants = VariantVariables.read_vcf(
-                    vcf_fn, bin_size=haplotypes.bin_size,
-                    reference_name=reference_genotype,
-                    use_haplotypes=parental_genotypes.columns
-                )
-                variants = variants.filter_minor_allele(
-                    parental_genotypes,
-                    haplotypes,
-                    min_frac=variant_maf
-                )
-                log.info(f'Identified {len(variants)} variant clusters above {variant_maf * 100:.1f}% minor allele '
-                         'fraction - these will be modelled instead of haplotype')
-
-
-    else:
-        log.info('No parental (diploid) genotypes provided. Genotypes are assumed to be the same for all nuclei')
-        parental_genotypes = None
+    if vcf_fn is not None:
+        if reference_genotype is None:
+            raise ValueError('If a VCF file is provided, the reference genotype name must also be provided')
+        variants = VariantVariables.read_vcf(
+            vcf_fn, bin_size=haplotypes.bin_size,
+            reference_name=reference_genotype,
+            use_haplotypes=parental_genotypes.columns
+        )
+        variants = variants.filter_minor_allele(
+            parental_genotypes,
+            haplotypes,
+            min_frac=variant_maf
+        )
+        log.info(f'Identified {len(variants)} variant clusters above {variant_maf * 100:.1f}% minor allele '
+                 'fraction - these will be modelled instead of haplotype')
 
     if control_cis_haplotypes:
         if gtf_fn is None:
@@ -166,6 +176,7 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix, gtf_fn=No
         expression_variables=expression_variables,
         haplotypes=haplotypes,
         parental_genotypes=parental_genotypes,
+        control_parental_genotype=control_parental_genotype,
         variants=variants,
         gene_locs=gene_locs,
         interacting_variables=interacting_variables,
