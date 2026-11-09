@@ -370,12 +370,13 @@ sneqtl_opts.option(
 
 
 def _parse_covar_haplotypes(ctx, param, value):
-    if value is not None:
-        parsed = []
-        for locus in value.strip().split(','):
-            chrom, pos = locus.split(':')
-            pos = int(pos)
-            parsed.append((chrom, pos))
+    if value is None:
+        return value
+    parsed = []
+    for locus in value.strip().split(','):
+        chrom, pos = locus.split(':')
+        pos = int(pos)
+        parsed.append((chrom, pos))
     return parsed
 
 
@@ -384,6 +385,7 @@ sneqtl_opts.option(
     subcommands=['eqtl'],
     required=False,
     default=None,
+    callback=_parse_covar_haplotypes,
     help=('comma separated list of positions (in format Chr1:100000), the haplotypes of which '
           'should be controlled for as covariates in the model')
 )

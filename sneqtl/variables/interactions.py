@@ -27,21 +27,29 @@ class HaplotypeInteractionVariables(VariableManager):
 
     @staticmethod
     def validate_design(parental_genotypes, covariates,
-                        interacting_variables=None):
+                        interacting_variables=None, variant_mode=False):
 
-        channel_indices = parental_genotypes._channel_indices
-        n_barcodes, n_channels = channel_indices.shape
+        n_barcodes = len(parental_genotypes.index)
 
-        # Enumerate every possible inherited founder for each barcode.
-        rows = np.repeat(np.arange(n_barcodes), n_channels)
-        founders = channel_indices.ravel()
+        if variant_mode:
+            # Enumerate both possible allele states for each barcode.
+            rows = np.repeat(np.arange(n_barcodes), 2)
+            H = np.tile([[0.0], [1.0]], (n_barcodes, 1))
 
-        nonref = [
-            i for i, founder in enumerate(parental_genotypes.columns)
-            if founder != parental_genotypes._ref_geno
-        ]
+        else:
+            # Enumerate possible inherited founders for each barcode.
+            channel_indices = parental_genotypes._channel_indices
+            n_channels = channel_indices.shape[1]
 
-        H = (founders[:, None] == np.array(nonref)).astype(np.float64)
+            rows = np.repeat(np.arange(n_barcodes), n_channels)
+            founders = channel_indices.ravel()
+
+            nonref = [
+                i for i, founder in enumerate(parental_genotypes.columns)
+                if founder != parental_genotypes._ref_geno
+            ]
+
+            H = (founders[:, None] == np.array(nonref)).astype(np.float64)
 
         # Apply the actual interaction structure.
         for iv in interacting_variables or []:

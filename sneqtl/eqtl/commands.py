@@ -109,6 +109,8 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
 
     pca_calc_required = control_principal_components
     ct_calc_required = celltype_haplotype_interaction
+    covariates = None
+    celltype_clusters = None
 
     if cb_stats is not None:
 
@@ -127,7 +129,7 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
             log.debug(celltype_clusters.celltype_counts)
             ct_calc_required = False
 
-    elif pca_calc_required or ct_calc_required:
+    if pca_calc_required or ct_calc_required:
 
         principal_components = PrincipalComponents.from_expression(
             expression_variables,

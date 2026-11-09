@@ -164,25 +164,27 @@ class CisHaploCovariates(VariableManager):
 
             if variants is not None:
                 local_variants = variants.get_bin_variants(chrom, win_start, win_end)
-                # if there are fewer variants than haplotypes, fallback to controlling by haplotype
+
                 if len(local_variants) > n_pcs:
-                    # compute PCs on local variants
                     pcs = PrincipalComponents.from_local_variants(local_variants, n_pcs)
-                    pcs = pcs.drop(index=[parental_genotypes._ref_geno])._data
-                    # expand to all barcodes
-                    win_cis_hap = win_cis_hap @ pcs
                 else:
                     if chrom not in chrom_level_pcs:
-                        # use chromosome level variants instead of local variants
                         chrom_variants = variants.get_bin_variants(chrom)
                         if len(chrom_variants) <= n_pcs:
                             raise ValueError(
                                 'Insufficient variation to calculate cis-haplotype principal components'
                             )
-                        pcs = PrincipalComponents.from_local_variants(chrom_variants, n_pcs)
-                        pcs = pcs.drop(index=[parental_genotypes._ref_geno])._data
-                        chrom_level_pcs[chrom] = pcs
-                    win_cis_hap = win_cis_hap @ chrom_level_pcs[chrom]
+                        chrom_level_pcs[chrom] = PrincipalComponents.from_local_variants(
+                            chrom_variants, n_pcs
+                        )
+                    pcs = chrom_level_pcs[chrom]
+
+                # Express founder PC scores relative to the reference founder.
+                ref = parental_genotypes._ref_geno
+                nonref = [f for f in parental_genotypes.columns if f != ref]
+                pc_scores = pcs.reindex(index=nonref)._data - pcs.loc[ref]
+
+                win_cis_hap = win_cis_hap @ pc_scores
                         
 
             pos_arrs[(chrom, pos_idx)] = win_cis_hap
