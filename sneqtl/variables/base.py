@@ -394,7 +394,7 @@ class VariableManager:
 
     def filter_correlated(self, other, max_r2):
         r2 = arr_utils.corrwith(other._data, self._data, axis=0) ** 2
-        keep = r2.max(axis=0) <= max_r2
+        keep = np.nan_to_num(r2, nan=0.0).max(axis=0) <= max_r2
         return self.reindex(
             columns=[col for k, col in zip(keep, self.columns) if k]
         )

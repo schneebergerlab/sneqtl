@@ -398,3 +398,18 @@ class HaplotypeVariables(VariableManager):
                 keep.append(h)
 
         return control_haplotypes, self.reindex(columns=keep)
+
+    def get_mean_haplotype(self, chrom, start, end):
+        """Return mean haplotype dosage across bins in a genomic interval.
+
+        Returns (n_barcodes, n_channels) for multichannel predictions,
+        or (n_barcodes,) for scalar predictions.
+        """
+        indices = [
+            i for i, (c, pos) in enumerate(self.columns)
+            if c == chrom and start <= pos < end
+        ]
+        if not indices:
+            raise ValueError(f'No haplotype bins in {chrom}:{start}-{end}')
+
+        return self._data[:, indices, ...].mean(axis=1)

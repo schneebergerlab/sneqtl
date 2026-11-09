@@ -20,17 +20,22 @@ class Covariates(VariableManager):
     @classmethod
     def from_variables(cls, *, interacting_variables=None, parental_genotypes=None,
                        covariate_haplotypes=None, base_covariates=None,
-                       genotype_covariates_as_pcs=False, variants=None, name=None):
+                       genotype_covariates_as_pcs=False, variants=None,
+                       name=None, barcodes=None):
         columns = ['const',]
         sections = []
 
         if interacting_variables is None:
             interacting_variables = []
 
-        index = check_aligned(
+        sources = [
             *interacting_variables, parental_genotypes,
             covariate_haplotypes, base_covariates
-        )
+        ]
+        index = check_aligned(*sources) if any(s is not None for s in sources) else barcodes
+
+        if index is None:
+            raise ValueError('If there are no other covariates, barcodes must be provided')
 
         for iv in interacting_variables:
             iv = iv.as_covariates()
@@ -55,7 +60,7 @@ class Covariates(VariableManager):
             columns += bc.columns
 
         if not sections:
-            return None
+            return cls.null_covariates(barcodes, name=name)
 
         covariate_matrix = np.column_stack(sections)
         n_obs = covariate_matrix.shape[0]
@@ -70,8 +75,7 @@ class Covariates(VariableManager):
         return covars
 
     @classmethod
-    def null_covariates(cls, variables, dtype=np.float32, name=None):
-        barcodes = variables.barcodes
+    def null_covariates(cls, barcodes, dtype=np.float32, name=None):
         intercept = np.ones((len(barcodes), 1), dtype=dtype)
         return cls(intercept, index=barcodes, columns=['const'], name=name)
 
@@ -107,49 +111,25 @@ class CisHaploCovariates(VariableManager):
         self.bin_size = None
         self.window_size = None
 
-    @staticmethod
-    def _resolve_mode(parental_genotypes, variants):
-        if parental_genotypes is None and variants is None:
-            return 'haplotype_only'
-        if parental_genotypes is not None and variants is None:
-            return 'parental_genotype'
-        if parental_genotypes is not None and variants is not None:
-            return 'variant_pcs'
-        raise ValueError('variants_pc mode requires parental_genotypes')
-
     @classmethod
-    def from_haplotypes(
-        cls,
-        haplotype_variables,
-        gene_locs,
-        parental_genotypes=None,
-        variants=None,
-        window_size=250_000,
-        max_pcs=10,
-        gene_ids=None,
-        dtype=np.float32,
-        name=None,
-    ):
+    def from_haplotypes(cls, haplotype_variables, gene_locs, parental_genotypes,
+                        variants=None, window_size=250_000, max_pcs=10,
+                        gene_ids=None, dtype=np.float32, name=None):
         if not isinstance(haplotype_variables, HaplotypeVariables):
             raise TypeError('haplotype_variables must be a HaplotypeVariables object')
 
-        if parental_genotypes is not None and not isinstance(parental_genotypes, ParentalGenotypesContainer):
+        if not isinstance(parental_genotypes, ParentalGenotypesContainer):
             raise TypeError('parental_genotypes must be a ParentalGenotypesContainer object')
 
         if haplotype_variables.bin_size is None:
             raise ValueError('haplotype_variables.bin_size must be set')
 
-        if parental_genotypes is not None:
-            check_aligned(haplotype_variables, parental_genotypes)
+        check_aligned(haplotype_variables, parental_genotypes)
 
         if gene_ids is not None:
             gene_locs = gene_locs.loc[list(gene_ids)]
 
-        mode = cls._resolve_mode(parental_genotypes, variants)
-
-        if mode == 'haplotype_only':
-            items = ['cis_hap']
-        elif mode == 'parental_genotype':
+        if variants is None:
             items = [f'cis_hap_{h}' for h in parental_genotypes.columns if h != parental_genotypes._ref_geno]
         else:
             n_pcs = min(max_pcs, len(parental_genotypes.columns) - 1)
@@ -177,22 +157,15 @@ class CisHaploCovariates(VariableManager):
             win_start = max(pos_idx - h_ws, 0) * bin_size
             # can be longer than chrom size but doesn't matter due to get_mean_haplotype implementation
             win_end = (pos_idx + h_ws + 1) * bin_size
-            win_cis_hap = haplotype_variables.get_mean_haplotype(chrom, win_start, win_end)
-        
-            # simplest case, cis-haplo covar is just the mean haplo var
-            if mode == 'haplotype_only':
-                win_cis_hap = win_cis_hap[:, None]
+            win_cis_hap = parental_genotypes.get_haplotype_variables(
+                haplotype_variables.get_mean_haplotype(chrom, win_start, win_end),
+                variants=None
+            )._data
 
-            # next case, cis-haplo covar is product of hap and parental genotypes
-            elif mode == 'parental_genotype':
-                win_cis_hap = parental_genotypes.get_haplotype_variables(win_cis_hap, variants=None)._data
-
-            # last case, cis-haplo covar is PCA of haplotype level variants
-            else:
-                win_cis_hap = parental_genotypes.get_haplotype_variables(win_cis_hap, variants=None)._data
+            if variants is None:
                 local_variants = variants.get_bin_variants(chrom, win_start, win_end)
                 # if there are fewer variants than haplotypes, fallback to controlling by haplotype
-                if len(local_variants) >= n_pcs:
+                if len(local_variants) > n_pcs:
                     # compute PCs on local variants
                     pcs = PrincipalComponents.from_local_variants(local_variants, n_pcs)
                     pcs = pcs.drop(index=[parental_genotypes._ref_geno])._data

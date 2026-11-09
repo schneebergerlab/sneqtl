@@ -145,7 +145,7 @@ class SinglePhenoQTLAnalysis:
         self.gene_id = gene_id
         self.haplotype_variables = haplotype_variables
         if covariates is None:
-            self.covariates = Covariates.null_covariates(haplotype_variables)
+            self.covariates = Covariates.null_covariates(haplotype_variables.barcodes)
         else:
             self.covariates = covariates
         self.cis_haplo_covariates = cis_haplo_covariates

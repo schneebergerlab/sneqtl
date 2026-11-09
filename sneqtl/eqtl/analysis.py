@@ -136,6 +136,7 @@ class eQTLAnalysisManager:
             variants=variants,
             genotype_covariates_as_pcs=genotype_covariates_as_pcs,
             name='covariates',
+            barcodes=haplotypes.barcodes,
         )
         self.covariates = self._mm.convert(covariates)
 
@@ -234,12 +235,21 @@ class eQTLAnalysisManager:
         self.close()
 
     def run_gene(self, gene_id):
+        if self.control_cis_haplotypes:
+            cis_haplo_covariates = self.cis_haplo_covariates.get_gene(gene_id)
+        else:
+            cis_haplo_covariates = None
+
         e = SinglePhenoQTLAnalysis(
             y=self.expression_variables.loc[gene_id],
             haplotype_variables=self.haplotype_variables,
             gene_id=gene_id,
             covariates=self.covariates,
+            cis_haplo_covariates=cis_haplo_covariates,
+            bonf_correction=len(self.expression_variables),
             bin_size=self.bin_size,
+            minP_threshold=self.minP_threshold,
+            n_perm=self.n_perm,
             L_precomp=self.L_precomp,
             diag_precomp=self.diag_precomp,
         )
@@ -277,6 +287,7 @@ class eQTLAnalysisManager:
                 cis_haplo_covariates=cis_haplo_covariates,
                 bonf_correction=len(expression_variables), # control for n genes
                 bin_size=self.bin_size,
+                n_perm=self.n_perm
                 minP_threshold=self.minP_threshold,
                 L_precomp=L_precomp,
                 diag_precomp=diag_precomp,
