@@ -43,7 +43,7 @@ class Covariates(VariableManager):
             sections.append(iv._data)
             columns += iv.columns
 
-        if genotype_covariate_mode != None:
+        if genotype_covariate_mode != 'none':
             pg = parental_genotypes.as_covariates(
                 variants=variants,
                 as_pcs=genotype_covariates_as_pcs,

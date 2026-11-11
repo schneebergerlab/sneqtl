@@ -201,23 +201,23 @@ class ParentalGenotypesContainer:
 
     def as_covariates(self, variants=None, as_pcs=False,
                       min_var_explained=0.01, max_pcs=10,
-                      rng=None, encoding='founders'):
+                      rng=None, encoding='founder'):
         """
         Return position-independent genotype covariates.
 
-        encoding='founders':
+        encoding='founder':
             Founder membership summed across the two parents.
 
-        encoding='genotypes':
+        encoding='genotype':
             One-hot encoding of distinct overall crossing genotypes.
         """
-        if encoding not in ('founders', 'genotypes'):
+        if encoding not in ('founder', 'genotype'):
             raise ValueError(
-                "encoding must be 'founders' or 'genotypes'"
+                "encoding must be 'founder' or 'genotype'"
             )
 
         if as_pcs:
-            if encoding != 'founders':
+            if encoding != 'founder':
                 raise ValueError(
                     "PCA is only supported with founder encoding"
                 )
@@ -235,7 +235,7 @@ class ParentalGenotypesContainer:
                 **kwargs,
             )
 
-        if encoding == 'founders':
+        if encoding == 'founder':
             # Existing representation: sum parental founder memberships.
             data = self._hap1._data + self._hap2._data
 
