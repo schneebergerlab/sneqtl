@@ -97,7 +97,7 @@ class eQTLResults:
 class eQTLAnalysisManager:
 
     def __init__(self, output_dir, expression_variables, haplotypes,
-                 parental_genotypes, control_parental_genotype=True,
+                 parental_genotypes, genotype_covariate_mode='none',
                  variants=None, gene_locs=None,
                  interacting_variables=None, covariates=None,
                  covariate_haplotypes=None,
@@ -129,11 +129,12 @@ class eQTLAnalysisManager:
             parental_genotypes, covariate_haplotypes, remove_correlated=True,
         )
         covariates = Covariates.from_variables(
-            parental_genotypes=parental_genotypes if control_parental_genotype else None,
+            parental_genotypes=parental_genotypes,
             interacting_variables=interacting_variables,
             covariate_haplotypes=covariate_haplotypes,
             base_covariates=covariates,
             variants=variants,
+            genotype_covariate_mode=genotype_covariate_mode,
             genotype_covariates_as_pcs=genotype_covariates_as_pcs,
             name='covariates',
             barcodes=haplotypes.barcodes,

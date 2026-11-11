@@ -20,6 +20,7 @@ class Covariates(VariableManager):
     @classmethod
     def from_variables(cls, *, interacting_variables=None, parental_genotypes=None,
                        covariate_haplotypes=None, base_covariates=None,
+                       genotype_covariate_mode='founder',
                        genotype_covariates_as_pcs=False, variants=None,
                        name=None, barcodes=None):
         columns = ['const',]
@@ -42,9 +43,11 @@ class Covariates(VariableManager):
             sections.append(iv._data)
             columns += iv.columns
 
-        if parental_genotypes is not None:
+        if genotype_covariate_mode != None:
             pg = parental_genotypes.as_covariates(
-                variants=variants, as_pcs=genotype_covariates_as_pcs
+                variants=variants,
+                as_pcs=genotype_covariates_as_pcs,
+                encoding=genotype_covariate_mode,
             )
             sections.append(pg._data)
             columns += pg.columns

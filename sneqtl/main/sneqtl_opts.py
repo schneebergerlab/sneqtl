@@ -283,11 +283,12 @@ sneqtl_opts.option(
 
 
 sneqtl_opts.option(
-    '--control-genotype/--no-genotype', 'control_parental_genotype',
+    '-G', '--genotype-covariate-mode', 'genotype_covariate_mode',
     subcommands=['eqtl'],
     required=False,
-    default=False,
-    help='whether to control for parental (diploid) genotype'
+    type=click.Choice(['founder', 'genotype', 'none'], case_sensitive=False),
+    default='none',
+    help='how to control for parental (diploid) genotype.'
 )
 
 

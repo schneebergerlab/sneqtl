@@ -26,7 +26,7 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
              diploid_json_fn=None, gtf_fn=None, vcf_fn=None,
              rel_min_cells_exprs=0.02, abs_min_cells_exprs=100,
              control_principal_components=True, min_pc_var_explained=0.01, covar_names=None,
-             control_parental_genotype=False, reference_genotype=None,
+             genotype_covariate_mode='none', reference_genotype=None,
              min_cells_per_geno=100, variant_maf=0.05, genotype_covariates_as_pcs=False,
              celltype_haplotype_interaction=False, celltype_n_clusters=None,
              control_cis_haplotypes=True, cis_hap_window_size=250_000, covariate_haplotypes=None,
@@ -52,7 +52,7 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
 
     if cb_stats_fn is not None:
         cb_stats = read_cb_stats(cb_stats_fn, cb_filter_exprs)
-        if control_parental_genotype and min_cells_per_geno:
+        if genotype_covariate_mode != 'none' and min_cells_per_geno:
             cb_stats = cb_stats.groupby(parental_genotypes).filter(lambda g: len(g) >= min_cells_per_geno)
         cb_whitelist = cb_stats.index.tolist()
         log.info(f'Read {len(cb_whitelist)} barcodes')
@@ -65,9 +65,9 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
         cb_whitelist = haploid_records.barcodes
 
     n_geno = len(set(parental_genotypes.values()))
-    if control_parental_genotype and n_geno == 1:
+    if genotype_covariate_mode != 'none' and n_geno == 1:
         log.warn('All parental (diploid) genotypes are the same. Genotype will not be modelled')
-        control_parental_genotype = False
+        genotype_covariate_mode = 'none'
     else:
         log.info(f'There are {n_geno} parental (diploid) genotypes to be tested')
 
@@ -77,6 +77,9 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
 
     expression_variables = ExpressionVariables.read_matrix_market(exprs_mat_dir)
     if cb_whitelist is not None:
+        cb_whitelist = sorted(
+            set(expression_variables.barcodes).intersection(cb_whitelist)
+        )
         expression_variables = expression_variables.reindex(columns=cb_whitelist)
     expression_variables = (
         expression_variables.filter_genes(
@@ -147,8 +150,8 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
             log.info(f'Identified {celltype_clusters.shape[1]} cell type clusters')
             log.debug(celltype_clusters.celltype_counts)
 
-    principal_components = principal_components.filter_correlated(haplotypes, max_r2=0.05)
     if control_principal_components:
+        principal_components = principal_components.filter_correlated(haplotypes, max_r2=0.05)
         log.info('After filtering for PCs correlated with haplotypes, '
                  f'{principal_components.columns} will be used as covariates')
         covariates = principal_components
@@ -195,7 +198,7 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
         expression_variables=expression_variables,
         haplotypes=haplotypes,
         parental_genotypes=parental_genotypes,
-        control_parental_genotype=control_parental_genotype,
+        genotype_covariate_mode=genotype_covariate_mode,
         variants=variants,
         gene_locs=gene_locs,
         interacting_variables=interacting_variables,
@@ -209,19 +212,19 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
         exists_ok=resume,
         tmpdir=tmpdir,
     )
-    covar_names = e.covariates.variable_names
-    if e.control_cis_haplotypes:
-        covar_names += e.cis_haplo_covariates.variable_names
-    haplo_var_names = e.haplotype_variable_names
-    log.debug(f'Controlling for {len(covar_names)} covariates: {covar_names}')
-    log.debug(f'{len(haplo_var_names)} haplotype-associated variables will be tested: {haplo_var_names}')
+    with e:
+        covar_names = list(e.covariates.variable_names)
+        if e.control_cis_haplotypes:
+            covar_names += e.cis_haplo_covariates.variable_names
+        haplo_var_names = e.haplotype_variable_names
+        log.debug(f'Controlling for {len(covar_names)} covariates: {covar_names}')
+        log.debug(f'{len(haplo_var_names)} haplotype-associated variables will be tested: {haplo_var_names}')
 
-    eqtl_results = e.run_all_genes(
-        processes=processes,
-        torch_threads_per_process=torch_threads_per_process,
-        resume=resume,
-    )
-    e.close()
+        eqtl_results = e.run_all_genes(
+            processes=processes,
+            torch_threads_per_process=torch_threads_per_process,
+            resume=resume,
+        )
 
     if run_peakcall:
         if gtf_fn is None:

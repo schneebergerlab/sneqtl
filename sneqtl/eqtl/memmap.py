@@ -3,6 +3,7 @@ import logging
 import shutil
 import joblib
 import tempfile
+from contextlib import contextmanager
 
 import numpy as np
 
