@@ -683,8 +683,15 @@ def fit_models(y, covariates, haplo_variables, *, haplo_variables_alt=None, batc
     y_perms = _generate_permuted_phenotypes(
         covariates, beta_nest, resid_nest, rng=rng, n_perm=n_perm
     )
-    beta_nest, sse_nest, resid_nest, ctc, cty_perms, yty_perms = _fit_lm(covariates, y_perms, return_projections=True)
+
+    del y, beta_nest, resid_nest
+
+    beta_nest, sse_nest, resid_nest, ctc, cty_perms, yty_perms = _fit_lm(
+        covariates, y_perms, return_projections=True
+    )
     ll_nest = _ll(sse_nest, n).unsqueeze(0)
+
+    del beta_nest, sse_nest, resid_nest
 
     results = []
     lrt_null_dist = []  # to accumulate minP p val per batch per permutation
@@ -759,6 +766,15 @@ def fit_models(y, covariates, haplo_variables, *, haplo_variables_alt=None, batc
             param_null_dist_alt.append(_minP(param_pvals_alt_perm[:, :, 1:]))
 
         results.append(batch_res)
+
+        del lod_scores_perm, lrt_pvals_perm
+        del param_lods_perm, coefs_perm, param_pvals_perm
+        del lod_scores, lrt_pvals, param_lods, coefs, param_pvals
+
+        if haplo_variables_alt is not None:
+            del lod_scores_alt_perm, lrt_pvals_alt_perm
+            del param_lods_alt_perm, coefs_alt_perm, param_pvals_alt_perm
+            del lod_scores_alt, lrt_pvals_alt, param_lods_alt, coefs_alt, param_pvals_alt
 
     # After all batches, compute overall minP distribution
     lrt_null_dist = _minP(torch.stack(lrt_null_dist))  # (n_perm,)

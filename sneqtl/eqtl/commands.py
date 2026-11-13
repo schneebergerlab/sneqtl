@@ -1,10 +1,7 @@
 from logging import getLogger
 import numpy as np
 
-from coelsch.records import PredictionRecords
-from coelsch.experiment.genotypes import GenotypeKey
 from coelsch.defaults import DEFAULT_RANDOM_SEED
-
 from .memmap import MemmapManager
 from .cache import AnalysisCache
 from .preprocessing import preprocess_variables, eQTLVariables

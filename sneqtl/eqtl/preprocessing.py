@@ -234,9 +234,10 @@ def preprocess_variables(exprs_mat_dir, haplo_json_fn, cb_stats_fn, mm,
         haplotypes = haplotypes.reindex(index=cb_whitelist)
         parental_genotypes = parental_genotypes.reindex(index=cb_whitelist)
 
-        if cb_stats is not None:
-            cb_stats = cb_stats.reindex(index=cb_whitelist)
         assert expression_variables.barcodes == haplotypes.barcodes
+
+    if cb_stats is not None:
+        cb_stats = cb_stats.reindex(index=cb_whitelist)
 
     principal_components = None
     if control_principal_components:
