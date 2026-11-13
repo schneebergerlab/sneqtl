@@ -25,6 +25,7 @@ class HaplotypeVariables(VariableManager):
 
     index_name = 'cb'
     columns_name = 'haplotypes'
+    memmap_attrs = ('bin_size',)
 
     def __init__(self, data, index, columns, items=None, name=None,
                  dtype=None, frozen=True, bin_size=None):

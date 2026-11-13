@@ -44,7 +44,7 @@ class ParentalGenotypesContainer:
     """
 
     def __init__(self, hap1, hap2, unique_genotypes, channel_indices,
-                 reference_genotype=None):
+                 reference_genotype=None, covariate_mode='none'):
         if (
             hap1.index != hap2.index
             or hap1.columns != hap2.columns
@@ -79,6 +79,11 @@ class ParentalGenotypesContainer:
         self._hap2 = hap2
         self._unique_genotypes = unique_genotypes
         self._channel_indices = channel_indices
+        if covariate_mode not in ('none', 'founder', 'genotype'):
+            raise ValueError(
+                "covariate_mode must be 'none', 'founder' or 'genotype'"
+            )
+        self._covariate_mode = covariate_mode
 
         if reference_genotype is None:
             reference_genotype = hap1.columns[0]
@@ -103,7 +108,7 @@ class ParentalGenotypesContainer:
         return self._ref_geno
 
     @classmethod
-    def from_genotype_dict(cls, parental_genotypes, reference_genotype=None):
+    def from_genotype_dict(cls, parental_genotypes, reference_genotype=None, covariate_mode='none'):
         """
         Construct genotype encodings from barcode -> GenotypeKey mappings.
 
@@ -160,11 +165,11 @@ class ParentalGenotypesContainer:
         )
 
         genotype_labels = [
-            (gt.genotype, gt.parental_roles, gt.sex_roles)
+            str(gt).split(':', maxsplit=1)[-1]
             for gt in genotypes
         ]
 
-        unique_labels = sorted(set(genotype_labels), key=str)
+        unique_labels = sorted(set(genotype_labels))
 
         genotype_index = {
             label: i for i, label in enumerate(unique_labels)
@@ -197,27 +202,27 @@ class ParentalGenotypesContainer:
             unique_genotypes=unique_genotypes,
             channel_indices=channel_indices,
             reference_genotype=reference_genotype,
+            covariate_mode=covariate_mode,
         )
 
     def as_covariates(self, variants=None, as_pcs=False,
                       min_var_explained=0.01, max_pcs=10,
-                      rng=None, encoding='founder'):
+                      rng=None):
         """
         Return position-independent genotype covariates.
 
-        encoding='founder':
+        when self.covariate_mode == 'founder':
             Founder membership summed across the two parents.
 
-        encoding='genotype':
+        when self.covariate_mode == 'genotype':
             One-hot encoding of distinct overall crossing genotypes.
         """
-        if encoding not in ('founder', 'genotype'):
-            raise ValueError(
-                "encoding must be 'founder' or 'genotype'"
-            )
+
+        if self._covariate_mode == 'none':
+            return None
 
         if as_pcs:
-            if encoding != 'founder':
+            if self._covariate_mode != 'founder':
                 raise ValueError(
                     "PCA is only supported with founder encoding"
                 )
@@ -235,7 +240,7 @@ class ParentalGenotypesContainer:
                 **kwargs,
             )
 
-        if encoding == 'founder':
+        if self._covariate_mode == 'founder':
             # Existing representation: sum parental founder memberships.
             data = self._hap1._data + self._hap2._data
 

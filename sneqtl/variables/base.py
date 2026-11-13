@@ -97,6 +97,7 @@ class VariableManager:
 
     index_name = None
     columns_name = None
+    memmap_attrs = ()
     
     def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
         self.name = self.__class__.__name__ if name is None else name

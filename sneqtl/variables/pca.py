@@ -12,6 +12,7 @@ class PrincipalComponents(VariableManager):
 
     index_name = 'cb'
     columns_name = 'principal_components'
+    memmap_attrs = ('pc_type', 'var_explained')
 
     def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
         super().__init__(data, index, columns, items=None, name=None, dtype=None, frozen=True)

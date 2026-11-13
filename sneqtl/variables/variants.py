@@ -10,6 +10,8 @@ from .genotypes import ParentalGenotypesContainer
 
 class VariantVariables(VariableManager):
 
+    memmap_attrs = ('bin_size',)
+
     def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
         super().__init__(data, index, columns, items=None, name=name, dtype=dtype, frozen=frozen)
         self.bin_size = None

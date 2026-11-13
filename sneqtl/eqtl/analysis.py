@@ -12,14 +12,7 @@ from pyarrow import compute as pc
 
 from coelsch.main.logger import progress_bar
 from .model.qtl import SinglePhenoQTLAnalysis, SingleGeneResults
-from .model.lm import precompute_var_covar_cholesky
-from .memmap import MemmapManager
-
-from sneqtl.variables.base import VariableManager
-from sneqtl.variables.exprs import ExpressionVariables
-from sneqtl.variables.covariates import Covariates, CisHaploCovariates
-from sneqtl.variables.interactions import HaplotypeInteractionVariables
-from sneqtl.variables.var_utils import check_aligned
+from .preprocessing import eQTLVariables
 
 
 class eQTLResults:
@@ -96,113 +89,26 @@ class eQTLResults:
 
 class eQTLAnalysisManager:
 
-    def __init__(self, output_dir, expression_variables, haplotypes,
-                 parental_genotypes, genotype_covariate_mode='none',
-                 variants=None, gene_locs=None,
-                 interacting_variables=None, covariates=None,
-                 covariate_haplotypes=None,
-                 genotype_covariates_as_pcs=False,
-                 control_cis_haplotypes=True,
-                 cis_hap_window_size=250_000,
-                 precompute_hap_factors=True,
-                 minP_threshold=0.01,
-                 n_perm=1000,
-                 batch_size=500,
-                 exists_ok=False,
-                 tmpdir=None):
+    def __init__(self, output_dir, variables: eQTLVariables,
+                 minP_threshold=0.01, n_perm=1000,
+                 batch_size=500, exists_ok=False):
 
-        if interacting_variables is None:
-            interacting_variables = []
+        self._mm = variables.mm
 
-        check_aligned(
-            expression_variables.T, haplotypes, parental_genotypes,
-            covariates, *interacting_variables
-        )
-        self._mm = MemmapManager(memmap=True, memmap_dir=tmpdir)
+        self.expression_variables = variables.expression_variables
+        self.covariates = variables.covariates
+        self.cis_haplo_covariates = variables.cis_haplo_covariates
+        self.haplotype_variables = variables.haplotype_variables
+        self.L_precomp = variables.L_precomp
+        self.diag_precomp = variables.diag_precomp
+        self.bin_size = variables.bin_size
+
+        self.control_cis_haplotypes = self.cis_haplo_covariates is not None
+        self._precomputed_factors = self.L_precomp is not None
+
         self.batch_size = batch_size
         self.minP_threshold = minP_threshold
         self.n_perm = n_perm
-
-        expression_variables.rename('expression_variables')
-        self.expression_variables = self._mm.convert(expression_variables)
-        covariate_haplotypes, haplotypes = haplotypes.get_covariate_haplotypes(
-            parental_genotypes, covariate_haplotypes, remove_correlated=True,
-        )
-        covariates = Covariates.from_variables(
-            parental_genotypes=parental_genotypes,
-            interacting_variables=interacting_variables,
-            covariate_haplotypes=covariate_haplotypes,
-            base_covariates=covariates,
-            variants=variants,
-            genotype_covariate_mode=genotype_covariate_mode,
-            genotype_covariates_as_pcs=genotype_covariates_as_pcs,
-            name='covariates',
-            barcodes=haplotypes.barcodes,
-        )
-
-        HaplotypeInteractionVariables.validate_design(
-            parental_genotypes=parental_genotypes,
-            covariates=covariates,
-            interacting_variables=interacting_variables,
-            variant_mode=variants is not None,
-        )
-
-        self.covariates = self._mm.convert(covariates)
-
-        if control_cis_haplotypes:
-            cis_haplo_covariates = CisHaploCovariates.from_haplotypes(
-                haplotype_variables=haplotypes,
-                gene_locs=gene_locs,
-                parental_genotypes=parental_genotypes,
-                variants=variants,
-                window_size=cis_hap_window_size,
-                gene_ids=expression_variables.gene_ids,
-                name='cis_haplo_covariates'
-            )
-            self.cis_haplo_covariates = self._mm.convert(cis_haplo_covariates)
-        else:
-            self.cis_haplo_covariates = None
-        self.control_cis_haplotypes = control_cis_haplotypes
-
-        self.bin_size = haplotypes.bin_size
-
-        self.haplotype_variables = HaplotypeInteractionVariables.from_cross_product(
-            haplotype_variables=haplotypes,
-            parental_genotypes=parental_genotypes,
-            variant_variables=variants,
-            interacting_variables=interacting_variables,
-            name='haplotype_variables',
-            memmap_manager=self._mm,
-        )
-
-        # if we don't have gene-specific covariates, we can precompute some shared factors
-        if precompute_hap_factors and not control_cis_haplotypes:
-            self._precomputed_factors = True
-            p = len(self.covariates.variable_names) + len(self.haplotype_variables.variable_names)
-            self.L_precomp = self._mm.create_empty(
-                'L_precomp',
-                index=self.haplotype_variables.haplotypes,
-                columns=[str(i) for i in range(p)],
-                items=[str(i) for i in range(p)],
-                dtype=np.float64,
-            )
-            self.diag_precomp = self._mm.create_empty(
-                'diag_precomp',
-                index=self.haplotype_variables.haplotypes,
-                columns=[str(i) for i in range(p)],
-                dtype=np.float64,
-            )
-            precompute_var_covar_cholesky(
-                self.covariates._data,
-                self.haplotype_variables._data,
-                L_out=self.L_precomp._data,
-                diag_out=self.diag_precomp._data,
-                batch_size=self.batch_size
-            )
-        else:
-            self._precomputed_factors = False
-            self.L_precomp = None
-            self.diag_precomp = None
 
         self.results = None
         self.output_dir = output_dir

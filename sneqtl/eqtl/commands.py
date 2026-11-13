@@ -5,16 +5,9 @@ from coelsch.records import PredictionRecords
 from coelsch.experiment.genotypes import GenotypeKey
 from coelsch.defaults import DEFAULT_RANDOM_SEED
 
-from sneqtl.variables.base import VariableManager
-from sneqtl.variables.exprs import ExpressionVariables
-from sneqtl.variables.haplotypes import HaplotypeVariables
-from sneqtl.variables.genotypes import ParentalGenotypesContainer
-from sneqtl.variables.variants import VariantVariables
-from sneqtl.variables.pca import PrincipalComponents
-from sneqtl.variables.celltypes import CellTypes
-from sneqtl.variables.var_utils import concat
-from sneqtl.io.misc import read_cb_stats
-from sneqtl.io.gtf import read_gtf_gene_locs
+from .memmap import MemmapManager
+from .cache import AnalysisCache
+from .preprocessing import preprocess_variables, eQTLVariables
 from .analysis import eQTLAnalysisManager
 
 
@@ -34,185 +27,92 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
              run_peakcall=True, lod_threshold=5, rel_lod_threshold=0.1,
              rel_prominence=0.25, ci_lod_drop=1.5,
              min_dist_between_eqtls=3e6, cis_eqtl_range=5e5,
-             processes=1, torch_threads_per_process=1, resume=False, rng=DEFAULT_RNG, tmpdir=None):
+             processes=1, torch_threads_per_process=1,
+             resume=False, rng=DEFAULT_RNG,
+             cache_dir=None, keep_variables=False):
+
+    if keep_variables and cache_dir is None:
+        raise ValueError('keep_variables=True requires cache_dir')
+
+    # collect all parameters for cache checking
+    params = locals().copy()
+    params['rng_state'] = rng.bit_generator.state
+    params['precompute_hap_factors'] = True
+
+    cache = AnalysisCache(cache_dir, parameters=params)
+
+    with cache.lock():
+        if keep_variables and not cache.is_complete():
+            cache.reset()
+
+        mm = MemmapManager(cache, persist=keep_variables)
+
+        if mm.cached:
+            log.info(f'Reusing cached variables: {cache.path}')
+            variables = eQTLVariables(
+                mm=mm,
+                expression_variables=mm.load('expression_variables'),
+                covariates=mm.load('covariates'),
+                haplotype_variables=mm.load('haplotype_variables'),
+                cis_haplo_covariates=(
+                    mm.load('cis_haplo_covariates')
+                    if 'cis_haplo_covariates' in cache.datasets else None
+                ),
+                L_precomp=(
+                    mm.load('L_precomp')
+                    if 'L_precomp' in cache.datasets else None
+                ),
+                diag_precomp=(
+                    mm.load('diag_precomp')
+                    if 'diag_precomp' in cache.datasets else None
+                ),
+                bin_size=int(cache.get_metadata()['bin_size']),
+            )
+        else:
+            try:
+                variables = preprocess_variables(
+                    exprs_mat_dir, haplo_json_fn, cb_stats_fn, mm,
+                    diploid_json_fn=diploid_json_fn,
+                    gtf_fn=gtf_fn,
+                    vcf_fn=vcf_fn,
+                    rel_min_cells_exprs=rel_min_cells_exprs,
+                    abs_min_cells_exprs=abs_min_cells_exprs,
+                    control_principal_components=control_principal_components,
+                    min_pc_var_explained=min_pc_var_explained,
+                    covar_names=covar_names,
+                    genotype_covariate_mode=genotype_covariate_mode,
+                    reference_genotype=reference_genotype,
+                    min_cells_per_geno=min_cells_per_geno,
+                    variant_maf=variant_maf,
+                    genotype_covariates_as_pcs=genotype_covariates_as_pcs,
+                    celltype_haplotype_interaction=celltype_haplotype_interaction,
+                    celltype_n_clusters=celltype_n_clusters,
+                    control_cis_haplotypes=control_cis_haplotypes,
+                    cis_hap_window_size=cis_hap_window_size,
+                    covariate_haplotypes=covariate_haplotypes,
+                    cb_filter_exprs=cb_filter_exprs,
+                    precompute_hap_factors=True,
+                    rng=rng                
+                )
+
+            except Exception:
+                mm.remove_all()
+                if keep_variables:
+                    cache.reset()
+                raise
+
+            if keep_variables:
+                cache.metadata['bin_size'] = int(variables.bin_size)
+                cache.mark_complete()
 
     output_dir = f'{output_prefix}.eqtls'
-
-    haploid_records = PredictionRecords.read_json(haplo_json_fn)
-    if 'genotypes' not in haploid_records.metadata:
-        raise ValueError('PredictionRecords object must contain a "genotypes" metadata slot')
-
-    def _strip_geno_name(geno_str):
-        return geno_str.split(':', maxsplit=1)[-1]
-
-    parental_genotypes = {
-        cb: GenotypeKey.from_str(_strip_geno_name(g))
-        for cb, g in haploid_records.metadata['genotypes'].items()
-    }
-
-    if cb_stats_fn is not None:
-        cb_stats = read_cb_stats(cb_stats_fn, cb_filter_exprs)
-        if genotype_covariate_mode != 'none' and min_cells_per_geno:
-            cb_stats = cb_stats.groupby(parental_genotypes).filter(lambda g: len(g) >= min_cells_per_geno)
-        cb_whitelist = cb_stats.index.tolist()
-        log.info(f'Read {len(cb_whitelist)} barcodes')
-        parental_genotypes = {
-            cb: geno for cb, geno in parental_genotypes.items()
-            if cb in cb_whitelist
-        }
-    else:
-        cb_stats = None
-        cb_whitelist = haploid_records.barcodes
-
-    n_geno = len(set(parental_genotypes.values()))
-    if genotype_covariate_mode != 'none' and n_geno == 1:
-        log.warn('All parental (diploid) genotypes are the same. Genotype will not be modelled')
-        genotype_covariate_mode = 'none'
-    else:
-        log.info(f'There are {n_geno} parental (diploid) genotypes to be tested')
-
-    parental_genotypes = ParentalGenotypesContainer.from_genotype_dict(
-        parental_genotypes, reference_genotype=reference_genotype
-    )
-
-    expression_variables = ExpressionVariables.read_matrix_market(exprs_mat_dir)
-    if cb_whitelist is not None:
-        cb_whitelist = sorted(
-            set(expression_variables.barcodes).intersection(cb_whitelist)
-        )
-        expression_variables = expression_variables.reindex(columns=cb_whitelist)
-    expression_variables = (
-        expression_variables.filter_genes(
-            rel_min_cells_exprs=rel_min_cells_exprs,
-            abs_min_cells_exprs=abs_min_cells_exprs,
-        ).log_normalise()
-    )
-    log.info(f'Identified {len(expression_variables)} genes to be tested')
-
-    if diploid_json_fn is not None:
-        diploid_records = PredictionRecords.read_json(diploid_json_fn)
-    else:
-        diploid_records = None
-    haplotypes = HaplotypeVariables.from_prediction_records(haploid_records, diploid_records, cb_whitelist)
-    log.info(f'Read haplotype information in {haplotypes.bin_size/1e3:.0f} kb bins')
-    log.info(f'There are {len(haplotypes.chroms)} chromosomes and '
-             f'{len(haplotypes.columns)} bins to be tested')
-
-    if expression_variables.barcodes != haplotypes.barcodes:
-        cb_whitelist = sorted(
-            set(expression_variables.barcodes).intersection(haplotypes.barcodes).intersection(cb_whitelist)
-        )
-        expression_variables = expression_variables.reindex(columns=cb_whitelist)
-        haplotypes = haplotypes.reindex(index=cb_whitelist)
-        if cb_stats is not None:
-            cb_stats = cb_stats.reindex(index=cb_whitelist)
-        assert expression_variables.barcodes == haplotypes.barcodes
-
-    parental_genotypes = parental_genotypes.reindex(index=cb_whitelist)
-
-    pca_calc_required = control_principal_components
-    ct_calc_required = celltype_haplotype_interaction
-    celltype_clusters = None
-
-    if cb_stats is not None:
-
-        if control_principal_components and cb_stats.columns.str.startswith('pc_').any():
-            pc = cb_stats.loc[:, cb_stats.columns.str.startswith('pc_')]
-            pc.columns = pc.columns.str[3:]
-            log.info(f'Using {len(pc.columns)} predetermined principal components from stats file')
-            principal_components = PrincipalComponents.from_dataframe(pc)
-            pca_calc_required = False
-
-        if celltype_haplotype_interaction and cb_stats.columns.str.startswith('ct_').any():
-            ct = cb_stats.loc[:, cb_stats.columns.str.startswith('ct_')]
-            ct.columns = ct.columns.str[3:]
-            log.info(f'Using {len(ct.columns)} predetermined celltypes from stats file')
-            celltype_clusters = CellTypes.from_dataframe(ct)
-            log.debug(celltype_clusters.celltype_counts)
-            ct_calc_required = False
-
-    if pca_calc_required or ct_calc_required:
-
-        principal_components = PrincipalComponents.from_expression(
-            expression_variables,
-            min_var_explained=min_pc_var_explained,
-            rng=rng,
-        )
-        log.info(f'Identified {principal_components.shape[1]} principal components '
-                 f'explaining {principal_components.var_explained * 100:.1f}% of variance')
-
-        if ct_calc_required:
-            celltype_clusters = CellTypes.from_principal_components(
-                principal_components,
-                n_clusters=celltype_n_clusters,
-                rng=rng
-            )
-            log.info(f'Identified {celltype_clusters.shape[1]} cell type clusters')
-            log.debug(celltype_clusters.celltype_counts)
-
-    if control_principal_components:
-        principal_components = principal_components.filter_correlated(haplotypes, max_r2=0.05)
-        log.info('After filtering for PCs correlated with haplotypes, '
-                 f'{principal_components.columns} will be used as covariates')
-        covariates = principal_components
-    else:
-        covariates = None
-
-    if covar_names is not None and cb_stats is not None:
-        extra_covars = (VariableManager.from_dataframe(cb_stats.loc[cb_whitelist, covar_names])
-                                       .as_numeric(drop_first=True))
-        if covariates is None:
-            covariates = extra_covars
-        else:
-            covariates = concat(principal_components, extra_covars, axis=1)
-
-    variants = None
-
-    if vcf_fn is not None:
-        if reference_genotype is None:
-            raise ValueError('If a VCF file is provided, the reference genotype name must also be provided')
-        variants = VariantVariables.read_vcf(
-            vcf_fn, bin_size=haplotypes.bin_size,
-            reference_name=reference_genotype,
-            use_haplotypes=parental_genotypes.columns
-        )
-        variants = variants.filter_minor_allele(
-            parental_genotypes,
-            haplotypes,
-            min_frac=variant_maf
-        )
-        log.info(f'Identified {len(variants)} variant clusters above {variant_maf * 100:.1f}% minor allele '
-                 'fraction - these will be modelled instead of haplotype')
-
-    if control_cis_haplotypes:
-        if gtf_fn is None:
-            raise ValueError('gtf_fn must be provided when controlling for cis haplotypes')
-        gene_locs = read_gtf_gene_locs(gtf_fn)
-    else:
-        gene_locs = None
-
-    interacting_variables = [celltype_clusters,] if celltype_clusters is not None else None
-
-    e = eQTLAnalysisManager(
+    with eQTLAnalysisManager(
         output_dir=output_dir,
-        expression_variables=expression_variables,
-        haplotypes=haplotypes,
-        parental_genotypes=parental_genotypes,
-        genotype_covariate_mode=genotype_covariate_mode,
-        variants=variants,
-        gene_locs=gene_locs,
-        interacting_variables=interacting_variables,
-        covariates=covariates,
-        covariate_haplotypes=covariate_haplotypes,
-        control_cis_haplotypes=control_cis_haplotypes,
-        cis_hap_window_size=cis_hap_window_size,
-        genotype_covariates_as_pcs=genotype_covariates_as_pcs,
+        variables=variables,
         minP_threshold=minP_threshold,
         n_perm=n_perm,
         exists_ok=resume,
-        tmpdir=tmpdir,
-    )
-    with e:
+    ) as e:
         covar_names = list(e.covariates.variable_names)
         if e.control_cis_haplotypes:
             covar_names += e.cis_haplo_covariates.variable_names

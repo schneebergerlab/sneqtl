@@ -20,7 +20,6 @@ class Covariates(VariableManager):
     @classmethod
     def from_variables(cls, *, interacting_variables=None, parental_genotypes=None,
                        covariate_haplotypes=None, base_covariates=None,
-                       genotype_covariate_mode='founder',
                        genotype_covariates_as_pcs=False, variants=None,
                        name=None, barcodes=None):
         columns = ['const',]
@@ -43,12 +42,11 @@ class Covariates(VariableManager):
             sections.append(iv._data)
             columns += iv.columns
 
-        if genotype_covariate_mode != 'none':
-            pg = parental_genotypes.as_covariates(
-                variants=variants,
-                as_pcs=genotype_covariates_as_pcs,
-                encoding=genotype_covariate_mode,
-            )
+        pg = parental_genotypes.as_covariates(
+            variants=variants,
+            as_pcs=genotype_covariates_as_pcs,
+        )
+        if pg is not None:
             sections.append(pg._data)
             columns += pg.columns
 
@@ -88,6 +86,7 @@ class CisHaploCovariates(VariableManager):
     index_name = 'cb'
     columns_name = 'gene_id'
     items_name='variable_names'
+    memmap_attrs = ('bin_size', 'window_size')
 
     @property
     def barcodes(self):
