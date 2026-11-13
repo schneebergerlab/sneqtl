@@ -14,8 +14,8 @@ log = logging.getLogger('sneqtl')
 class MemmapManager:
 
     def __init__(self, cache=None, persist=False):
-        if persist and cache is None:
-            raise ValueError('persist=True requires a cache')
+        if persist and (cache is None or not cache.enabled):
+            raise ValueError('persist=True requires an enabled cache')
 
         self.cache = cache
         self.persist = persist
@@ -103,7 +103,7 @@ class MemmapManager:
         return mm
 
     def create_empty(self, dataset_name, index, columns, items=None,
-                     dtype=np.float32, cls=VariableManager):
+                     dtype=np.float32, cls=VariableManager, **kwargs):
         if self.cached:
             raise ValueError('Cannot overwrite a cached dataset')
 
@@ -129,7 +129,7 @@ class MemmapManager:
         )
 
         dataset = cls(data, index=index, columns=columns, items=items,
-                      name=dataset_name, dtype=dtype, frozen=False)
+                      name=dataset_name, dtype=dtype, frozen=False, **kwargs)
 
         # although these are empty, they are required for some variables
         attrs = {

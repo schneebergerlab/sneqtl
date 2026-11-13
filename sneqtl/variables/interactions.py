@@ -9,6 +9,14 @@ from .variants import VariantVariables
 
 class HaplotypeInteractionVariables(VariableManager):
 
+    memmap_attrs = ('bin_size',)
+
+    def __init__(self, data, index, columns, items, name=None,
+                 dtype=None, frozen=True, bin_size=None):
+        super().__init__(data, index=index, columns=columns, items=items,
+                         name=name, dtype=dtype, frozen=frozen)
+        self.bin_size = bin_size
+
     @property
     def barcodes(self):
         return self.columns
@@ -120,7 +128,8 @@ class HaplotypeInteractionVariables(VariableManager):
                 columns=haplotype_variables.index,
                 items=variable_names,
                 dtype=dtype,
-                cls=cls
+                cls=cls,
+                bin_size=haplotype_variables.bin_size,
             )
         else:
             cross_prod_results = cls(
@@ -130,6 +139,7 @@ class HaplotypeInteractionVariables(VariableManager):
                 items=variable_names,
                 name=name,
                 dtype=dtype,
+                bin_size=haplotype_variables.bin_size,
             )
         cp_arr = cross_prod_results._data
 

@@ -69,6 +69,7 @@ class AnalysisCache:
             input_files.pop('gtf_fn', None)
 
         self.datasets = self._expected_datasets()
+        self.metadata = {}
 
         self.enabled = cache_root is not None
         if not self.enabled:
@@ -79,7 +80,7 @@ class AnalysisCache:
             return
 
         self.root = Path(cache_root).resolve()
-        self.signature = {
+        signature = {
             'version': self.VERSION,
             'inputs': {
                 name: self._file_signature(path)
@@ -87,6 +88,8 @@ class AnalysisCache:
             },
             'model_params': self.model_params,
         }
+        # roundtrip to json to encode encode/decode does not alter comparison
+        self.signature = json.loads(json.dumps(signature, sort_keys=True))
 
         payload = json.dumps(
             self.signature, sort_keys=True, separators=(',', ':')
@@ -147,7 +150,7 @@ class AnalysisCache:
         """Validate required files and return their sizes."""
         files = {}
 
-        for name in self.datasets:
+        for name, cls in self.datasets.items():
             data_path = self.path / f"{name}.npy"
             data = np.load(data_path, mmap_mode="r")
 
@@ -212,6 +215,7 @@ class AnalysisCache:
             "signature": self.signature,
             "datasets": self.dataset_classes,
             "files": self._dataset_file_sizes(),
+            'metadata': self.metadata,
         }
 
         temporary = self.path / "manifest.json.tmp"

@@ -66,7 +66,6 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
                     mm.load('diag_precomp')
                     if 'diag_precomp' in cache.datasets else None
                 ),
-                bin_size=int(cache.get_metadata()['bin_size']),
             )
         else:
             try:
@@ -95,15 +94,15 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
                     rng=rng                
                 )
 
+                if keep_variables:
+                    cache.mark_complete()
+
             except Exception:
                 mm.remove_all()
                 if keep_variables:
                     cache.reset()
                 raise
 
-            if keep_variables:
-                cache.metadata['bin_size'] = int(variables.bin_size)
-                cache.mark_complete()
 
     output_dir = f'{output_prefix}.eqtls'
     with eQTLAnalysisManager(

@@ -37,7 +37,6 @@ class eQTLVariables:
     cis_haplo_covariates: CisHaploCovariates | None
     L_precomp: VariableManager | None
     diag_precomp: VariableManager | None
-    bin_size: int
 
     def __post_init__(self):
         check_aligned(
@@ -216,6 +215,7 @@ def preprocess_variables(exprs_mat_dir, haplo_json_fn, cb_stats_fn, mm,
     haplotypes, parental_genotypes, bin_size, cb_whitelist = read_genotype_variables(
         haplo_json_fn, diploid_json_fn, reference_genotype,
         cb_whitelist=cb_whitelist,
+        genotype_covariate_mode=genotype_covariate_mode,
         min_cells_per_geno=min_cells_per_geno,
     )
 
@@ -383,5 +383,4 @@ def preprocess_variables(exprs_mat_dir, haplo_json_fn, cb_stats_fn, mm,
         cis_haplo_covariates=cis_haplo_covariates,
         L_precomp=L_precomp,
         diag_precomp=diag_precomp,
-        bin_size=bin_size,
     )

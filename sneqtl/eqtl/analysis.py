@@ -101,7 +101,7 @@ class eQTLAnalysisManager:
         self.haplotype_variables = variables.haplotype_variables
         self.L_precomp = variables.L_precomp
         self.diag_precomp = variables.diag_precomp
-        self.bin_size = variables.bin_size
+        self.bin_size = variables.haplotype_variables.bin_size
 
         self.control_cis_haplotypes = self.cis_haplo_covariates is not None
         self._precomputed_factors = self.L_precomp is not None

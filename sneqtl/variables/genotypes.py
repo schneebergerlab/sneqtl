@@ -344,4 +344,5 @@ class ParentalGenotypesContainer:
             ),
             channel_indices=channel_indices,
             reference_genotype=self._ref_geno,
+            covariate_mode=self._covariate_mode,
         )
