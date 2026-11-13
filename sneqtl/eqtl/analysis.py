@@ -140,15 +140,6 @@ class eQTLAnalysisManager:
         ]
         return colnames
 
-    def close(self):
-        self._mm.remove_all()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
-
     def run_gene(self, gene_id):
         if self.control_cis_haplotypes:
             cis_haplo_covariates = self.cis_haplo_covariates.get_gene(gene_id)

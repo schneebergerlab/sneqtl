@@ -533,14 +533,21 @@ sneqtl_opts.option(
 
 
 sneqtl_opts.option(
-    '-T', '--tmpdir', 'tmpdir',
+    '-T', '--cache-dir',
     subcommands=['eqtl'],
     required=False,
     default=None,
-    help='temporary directory for memmapped variables'
+    help='Cache directory for memmapped variables, if None, $TMPDIR is used'
 )
 
-
+sneqtl_opts.option(
+    '--keep-variables/--no-keep-variables',
+    subcommands=['eqtl'],
+    required=False,
+    default=False,
+    help=('Whether to retain cached variables after the analysis is completed. '
+          'If true, requires --cache-dir')
+)
 
 sneqtl_opts.option(
     '-v', '--verbosity',

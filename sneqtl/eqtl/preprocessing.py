@@ -65,8 +65,8 @@ def read_genotype_variables(haplo_json_fn, diploid_json_fn=None,
         return geno_str.split(':', maxsplit=1)[-1]
 
     parental_genotypes = {
-        cb: _strip_geno_name(g)
-        for cb, g in haploid_records.metadata['genotypes'].items()
+        cb: _strip_geno_name(haploid_records.metadata['genotypes'][cb])
+        for cb in haploid_records.barcodes
     }
     keep_genotypes = {
         geno for geno, count in Counter(parental_genotypes.values()).items()

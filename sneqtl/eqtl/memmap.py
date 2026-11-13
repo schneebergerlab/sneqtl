@@ -146,3 +146,9 @@ class MemmapManager:
             shutil.rmtree(self.memmap_dir)
         self.memmap_prefixes = {}
         self.memmap_classes = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.remove_all()

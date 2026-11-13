@@ -103,15 +103,16 @@ def run_eqtl(exprs_mat_dir, haplo_json_fn, cb_stats_fn, output_prefix,
                     cache.reset()
                 raise
 
+    with mm:
 
-    output_dir = f'{output_prefix}.eqtls'
-    with eQTLAnalysisManager(
-        output_dir=output_dir,
-        variables=variables,
-        minP_threshold=minP_threshold,
-        n_perm=n_perm,
-        exists_ok=resume,
-    ) as e:
+        output_dir = f'{output_prefix}.eqtls'
+        e = eQTLAnalysisManager(
+            output_dir=output_dir,
+            variables=variables,
+            minP_threshold=minP_threshold,
+            n_perm=n_perm,
+            exists_ok=resume,
+        )
         covar_names = list(e.covariates.variable_names)
         if e.control_cis_haplotypes:
             covar_names += e.cis_haplo_covariates.variable_names

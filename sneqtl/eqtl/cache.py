@@ -69,7 +69,6 @@ class AnalysisCache:
             input_files.pop('gtf_fn', None)
 
         self.datasets = self._expected_datasets()
-        self.metadata = {}
 
         self.enabled = cache_root is not None
         if not self.enabled:
@@ -215,7 +214,6 @@ class AnalysisCache:
             "signature": self.signature,
             "datasets": self.dataset_classes,
             "files": self._dataset_file_sizes(),
-            'metadata': self.metadata,
         }
 
         temporary = self.path / "manifest.json.tmp"
