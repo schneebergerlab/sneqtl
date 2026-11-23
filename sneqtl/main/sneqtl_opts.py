@@ -1,3 +1,4 @@
+from logging import getLogger
 import re
 import click
 
@@ -7,6 +8,9 @@ from coelsch.main.registry import OptionRegistry
 from coelsch.main.logger import click_logger
 from coelsch.main.opts.callbacks import log_parameters
 from coelsch.defaults import DEFAULT_RANDOM_SEED
+
+
+log = getLogger('sneqtl')
 
 
 sneqtl_opts = OptionRegistry(subcommands=['loadexprs', 'concatexprs', 'exprsstats', 'eqtl', 'peakcall'])
@@ -121,6 +125,13 @@ sneqtl_opts.option(
     help='VCF file name (activates GWAS mode!!)'
 )
 
+sneqtl_opts.option(
+    '--diploid-json-fn',
+    subcommands=['eqtl'],
+    required=False,
+    type=_input_file_type,
+    help='A coelsch prediction records json containing parental recombinant genotypes' # TODO clearer docstring
+)
 
 def _validate_bam_tag(ctx, param, value):
     if not len(value) == 2:
@@ -194,7 +205,7 @@ sneqtl_opts.option(
 def _parse_merge_suffixes(ctx, param, value):
     if value is not None:
         value = value.strip(',')
-        if not re.match('^[a-zA-Z0-9,]+$', value):
+        if not re.match('^[a-zA-Z0-9_,]+$', value):
             log.error('merge suffixes must be alphanumeric only')
         value = value.split(',')
     return value
@@ -272,11 +283,12 @@ sneqtl_opts.option(
 
 
 sneqtl_opts.option(
-    '--genotype/--no-genotype', 'model_parental_genotype',
+    '-G', '--genotype-covariate-mode', 'genotype_covariate_mode',
     subcommands=['eqtl'],
     required=False,
-    default=False,
-    help='whether to model parental (diploid) genotype'
+    type=click.Choice(['founder', 'genotype', 'none'], case_sensitive=False),
+    default='none',
+    help='how to control for parental (diploid) genotype.'
 )
 
 
@@ -285,7 +297,7 @@ sneqtl_opts.option(
     subcommands=['eqtl'],
     required=False,
     default=None,
-    help='which genotype to use as a reference (to be dropped in the model)'
+    help='which founder genotype to use as a reference (to be dropped in the model)'
 )
 
 
@@ -304,7 +316,7 @@ sneqtl_opts.option(
     subcommands=['eqtl'],
     required=False,
     type=click.FloatRange(1e-2, 1.0),
-    default=0.1,
+    default=0.05,
     help=('the minimum allele fraction (accounting for number of barcodes per genotype) required '
           'to model a variant')
 )
@@ -316,6 +328,25 @@ sneqtl_opts.option(
     required=False,
     default=False,
     help='when generating covariates, whether to use parental genotypes directly or to create PCs. Requires --vcf-fn'
+)
+
+
+sneqtl_opts.option(
+    '--control-cis-hap/--no-cis-hap', 'control_cis_haplotypes',
+    subcommands=['eqtl'],
+    required=False,
+    default=False,
+    help='whether to control for cis-haplotype as a covariate. When a vcf is provided, PCs will be used'
+)
+
+
+sneqtl_opts.option(
+    '--cis-hap-window-size',
+    subcommands=['eqtl'],
+    required=False,
+    type=click.IntRange(0, 100_000_000),
+    default=250_000,
+    help=('the size of window to use to generaet cis haplotype covariates')
 )
 
 
@@ -339,11 +370,23 @@ sneqtl_opts.option(
 )
 
 
+def _parse_covar_haplotypes(ctx, param, value):
+    if value is None:
+        return value
+    parsed = []
+    for locus in value.strip().split(','):
+        chrom, pos = locus.split(':')
+        pos = int(pos)
+        parsed.append((chrom, pos))
+    return parsed
+
+
 sneqtl_opts.option(
     '--covariate-haplotypes',
     subcommands=['eqtl'],
     required=False,
     default=None,
+    callback=_parse_covar_haplotypes,
     help=('comma separated list of positions (in format Chr1:100000), the haplotypes of which '
           'should be controlled for as covariates in the model')
 )
@@ -488,6 +531,23 @@ sneqtl_opts.option(
     help='seed for random number generator'
 )
 
+
+sneqtl_opts.option(
+    '-T', '--cache-dir',
+    subcommands=['eqtl'],
+    required=False,
+    default=None,
+    help='Cache directory for memmapped variables, if None, $TMPDIR is used'
+)
+
+sneqtl_opts.option(
+    '--keep-variables/--no-keep-variables',
+    subcommands=['eqtl'],
+    required=False,
+    default=False,
+    help=('Whether to retain cached variables after the analysis is completed. '
+          'If true, requires --cache-dir')
+)
 
 sneqtl_opts.option(
     '-v', '--verbosity',

@@ -138,16 +138,17 @@ class SingleGeneResults:
 
 class SinglePhenoQTLAnalysis:
 
-    def __init__(self, y, haplotype_variables, gene_id, covariates=None,
+    def __init__(self, y, haplotype_variables, gene_id, covariates=None, cis_haplo_covariates=None,
                  minP_threshold=0.01, n_perm=1000, bonf_correction=1.0, bin_size=25_000,
                  L_precomp=None, diag_precomp=None):
         self.y = y
         self.gene_id = gene_id
         self.haplotype_variables = haplotype_variables
         if covariates is None:
-            self.covariates = Covariates.null_covariates(haplotype_variables)
+            self.covariates = Covariates.null_covariates(haplotype_variables.barcodes)
         else:
             self.covariates = covariates
+        self.cis_haplo_covariates = cis_haplo_covariates
 
         # precomputed matrices to save compute across many phenotypes
         self.L_precomp = L_precomp
@@ -161,16 +162,20 @@ class SinglePhenoQTLAnalysis:
         self.results = None
 
     def test_all_positions(self, batch_size=500, rng=DEFAULT_RNG):
+        if self.cis_haplo_covariates is not None:
+            full_covars = np.concatenate([self.covariates._data, self.cis_haplo_covariates._data], axis=1)
+        else:
+            full_covars = self.covariates._data
         results, lrt_pval_threshold, param_pval_thresholds, *_ = fit_models(
             self.y,
-            self.covariates._data,
+            full_covars,
             self.haplotype_variables._data,
             batch_size=batch_size,
             n_perm=self.n_perm,
             minP_threshold=self.minP_threshold,
             bonf_correction=self.bonf_correction,
-            L_precomp=self.L_precomp._data,
-            diag_precomp=self.diag_precomp._data,
+            L_precomp=self.L_precomp._data if self.L_precomp is not None else None,
+            diag_precomp=self.diag_precomp._data if self.diag_precomp is not None else None,
             rng=rng
         )
         self.results = SingleGeneResults(

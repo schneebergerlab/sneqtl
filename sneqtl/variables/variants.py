@@ -10,6 +10,8 @@ from .genotypes import ParentalGenotypesContainer
 
 class VariantVariables(VariableManager):
 
+    memmap_attrs = ('bin_size',)
+
     def __init__(self, data, index, columns, items=None, name=None, dtype=None, frozen=True):
         super().__init__(data, index, columns, items=None, name=name, dtype=dtype, frozen=frozen)
         self.bin_size = None
@@ -23,33 +25,56 @@ class VariantVariables(VariableManager):
     def haplotypes(self):
         return self.columns
 
-    def get_bin_variants(self, chrom, bidx):
-        idx = [
+    def get_bin_variants(self, chrom, bstart=None, bend=None):
+        if bstart is None:
+            b_range = lambda b: True # any variant on chromosome
+        elif bend is None:
+            b_range = lambda b: b == bstart
+        else:
+            b_range = lambda b: (b >= bstart) and (b < bend)
+        reindex_ids = [
             (c, b, pos)
             for c, b, pos in self.index
-            if c == chrom and b == bidx
+            if c == chrom and b_range(b)
         ]
-        return self.__class__(self.loc[idx], index=idx, columns=self.columns)
+        return self.reindex(index=reindex_ids)
 
-    def filter_minor_allele(self, parental_genotypes, haplotype_variables, min_frac=0.05, min_abs=100):
-        n_barcodes = parental_genotypes._hap1.shape[0]
+    def filter_minor_allele(self, parental_genotypes, haplotype_variables,
+                            min_frac=0.05, min_abs=100):
+
+        if haplotype_variables.index != parental_genotypes.index:
+            raise ValueError("Barcode indexes do not match")
+
+        n_barcodes = len(haplotype_variables.index)
         reindex_ids = []
-        for (chrom, pos), i in haplotype_variables._column_map.items():
+
+        for chrom, pos in haplotype_variables.columns:
             hap = haplotype_variables[(chrom, pos)]
-            w = (
-                hap @ parental_genotypes._hap1._data + 
-                (1 - hap) @ parental_genotypes._hap2._data
-            )
             bin_variants = self.get_bin_variants(chrom, pos)
-            minor_counts = bin_variants._data @ w
-            minor_counts = np.minimum(minor_counts, n_barcodes - minor_counts)
-            maf = minor_counts / n_barcodes
-            min_abs_filt = minor_counts >= min_abs
-            min_frac_filt = maf >= min_frac
-            reindex_ids += [
-                pos_id for pos_id, f1, f2 in zip(bin_variants.index, min_abs_filt, min_frac_filt)
-                if f1 and f2
-            ]
+
+            if not bin_variants.index:
+                continue
+
+            # Shape: (n_variants, n_barcodes, 1)
+            variant_probs = parental_genotypes.get_haplotype_variables(
+                hap, variants=bin_variants
+            )._data[..., 0]
+
+            # Expected alternate-allele counts across pollen nuclei.
+            alt_counts = variant_probs.sum(axis=1)
+            minor_counts = np.minimum(alt_counts, n_barcodes - alt_counts)
+
+            keep = (
+                (minor_counts >= min_abs)
+                & (minor_counts / n_barcodes >= min_frac)
+            )
+
+            reindex_ids.extend(
+                variant_id
+                for variant_id, valid in zip(bin_variants.index, keep)
+                if valid
+            )
+
         return self.reindex(index=reindex_ids)
 
     @classmethod

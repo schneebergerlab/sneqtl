@@ -22,8 +22,11 @@ def corrwith(arr1, arr2, axis=0):
     if axis not in (0, 1):
         raise ValueError('axis must be 0 or 1')
 
-    if axis == 1:
-        arr1, arr2 = arr1.T, arr2.T
+    arr1 = np.moveaxis(arr1, axis, 0)
+    arr2 = np.moveaxis(arr2, axis, 0)
+
+    arr1 = arr1.reshape(arr1.shape[0], -1)
+    arr2 = arr2.reshape(arr2.shape[0], -1)
 
     if arr1.shape[0] != arr2.shape[0]:
         raise ValueError('Input arrays must have the same size along the correlation axis')
